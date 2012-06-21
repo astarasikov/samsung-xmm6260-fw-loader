@@ -126,7 +126,13 @@ static int expect_data(int fd, void *data, size_t size) {
 		_e("failed to receive data");
 		return ret;
 	}
-	return memcmp(buf, data, size);
+	ret = memcmp(buf, data, size);
+	
+	if (ret != 0) {
+		_d("received %02x", buf[0]);
+	}
+
+	return ret;
 }
 
 /*
