@@ -374,19 +374,110 @@ static int send_PSI(int fd) {
 		_d("%02x ", ack);
 	}
 
-	unsigned char ack = 0x1;
-	if ((ret = expect_data(fd, &ack, 1)) < 0) {
+	unsigned char buf[2] = {0x1};
+	if ((ret = expect_data(fd, buf, 1)) < 0) {
 		_d("failed to wait for first ACK");
 		goto fail;
 	}
 
-	if ((ret = expect_data(fd, &ack, 1)) < 0) {
+	if ((ret = expect_data(fd, buf, 1)) < 0) {
 		_d("failed to wait for second ACK");
 		goto fail;
+	}
+	
+	buf[0] = 0x00;
+	buf[1] = 0xAA;
+	if ((ret = expect_data(boot_fd, buf, 2)) < 0) {
+		_e("failed to receive PSI ACK");
+		goto fail;
+	}
+	else {
+		_d("received PSI ACK");
 	}
 
 	return 0;
 
+fail:
+	return ret;
+}
+
+static int send_EBL(int fd) {
+	return -1;
+}
+
+static int send_SecureImage(int fd) {
+	return -1;
+}
+
+static int reboot_modem(bool hard) {
+	int ret;
+	/*
+	 * Disable the hardware to ensure consistent state
+	 */
+	if (hard) {	
+		if ((ret = xmm6260_setpower(false)) < 0) {
+			_e("failed to disable xmm6260 power");
+			goto fail;
+		}
+		else {
+			_d("disabled xmm6260 power");
+		}
+	}
+
+	if ((ret = i9100_link_set_active(false)) < 0) {
+		_e("failed to disable I9100 HSIC link");
+		goto fail;
+	}
+	else {
+		_d("disabled I9100 HSIC link");
+	}
+
+	if ((ret = i9100_ehci_setpower(false)) < 0) {
+		_e("failed to disable I9100 EHCI");
+		goto fail;
+	}
+	else {
+		_d("disabled I9100 EHCI");
+	}
+
+	/*
+	 * Now, initialize the hardware
+	 */
+
+	if ((ret = i9100_link_set_active(true)) < 0) {
+		_e("failed to enable I9100 HSIC link");
+		goto fail;
+	}
+	else {
+		_d("enabled I9100 HSIC link");
+	}
+
+	if ((ret = i9100_ehci_setpower(true)) < 0) {
+		_e("failed to enable I9100 EHCI");
+		goto fail;
+	}
+	else {
+		_d("enabled I9100 EHCI");
+	}
+
+	if (hard) {
+		if ((ret = xmm6260_setpower(true)) < 0) {
+			_e("failed to enable xmm6260 power");
+			goto fail;
+		}
+		else {
+			_d("enabled xmm6260 power");
+		}
+	}
+
+	if ((ret = i9100_wait_link_ready()) < 0) {
+		_e("failed to wait for link to get ready");
+		goto fail;
+	}
+	else {
+		_d("link ready");
+	}
+	
 fail:
 	return ret;
 }
@@ -432,67 +523,12 @@ int main(int argc, char** argv) {
 		_d("opened link device %s, fd=%d", LINK_PM, link_fd);
 	}
 
-	/*
-	 * Disable the hardware to ensure consistent state
-	 */
-	
-	if (xmm6260_setpower(false) < 0) {
-		_e("failed to disable xmm6260 power");
+	if (reboot_modem(true)) {
+		_e("failed to hard reset modem");
 	}
 	else {
-		_d("disabled xmm6260 power");
+		_d("modem hard reset done");
 	}
-
-	if (i9100_link_set_active(false) < 0) {
-		_e("failed to disable I9100 HSIC link");
-	}
-	else {
-		_d("disabled I9100 HSIC link");
-	}
-
-	if (i9100_ehci_setpower(false) < 0) {
-		_e("failed to disable I9100 EHCI");
-	}
-	else {
-		_d("disabled I9100 EHCI");
-	}
-
-	/*
-	 * Now, initialize the hardware
-	 */
-
-	if (i9100_link_set_active(true) < 0) {
-		_e("failed to enable I9100 HSIC link");
-	}
-	else {
-		_d("enabled I9100 HSIC link");
-	}
-
-	if (i9100_ehci_setpower(true) < 0) {
-		_e("failed to enable I9100 EHCI");
-		goto fail;
-	}
-	else {
-		_d("enabled I9100 EHCI");
-	}
-
-	if (xmm6260_setpower(true) < 0) {
-		_e("failed to enable xmm6260 power");
-		goto fail;
-	}
-	else {
-		_d("enabled xmm6260 power");
-	}
-
-	if (i9100_wait_link_ready() < 0) {
-		_e("failed to wait for link to get ready");
-		goto fail;
-	}
-	else {
-		_d("link ready");
-	}
-	
-	usleep(500 * 1000);
 
 	/*
 	 * Now, actually load the firmware
@@ -526,23 +562,28 @@ int main(int argc, char** argv) {
 		_d("PSI download complete");
 	}
 
-	buf[0] = 0x00;
-	buf[1] = 0xAA;
-	if (expect_data(boot_fd, buf, 2) < 0) {
-		_e("failed to receive PSI ACK");
+	if ((ret = send_EBL(boot_fd)) < 0) {
+		_e("failed to upload EBL");
 		goto fail;
 	}
 	else {
-		_d("received PSI ACK");
+		_d("EBL download complete");
 	}
 
-	/*
-	 * send PSI
-	 * ack 0x00 0xaa
-	 * send EBL
-	 * send Secure
-	 * reboot
-	 */
+	if ((ret = send_SecureImage(boot_fd)) < 0) {
+		_e("failed to upload Secure Image");
+		goto fail;
+	}
+	else {
+		_d("Secure Image download complete");
+	}
+
+	if (reboot_modem(false)) {
+		_e("failed to soft reset modem");
+	}
+	else {
+		_d("modem soft reset done");
+	}
 
 fail:
 	if (radio_data != MAP_FAILED) {
