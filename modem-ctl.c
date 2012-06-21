@@ -333,6 +333,7 @@ static int send_PSI(int fd) {
 	psi_header_t hdr = {
 		.magic = XMM_PSI_MAGIC,
 		.length = length,
+		.padding = 0xff,
 	};
 	int ret = -1;
 	
@@ -391,6 +392,7 @@ fail:
 }
 
 int main(int argc, char** argv) {
+	int ret;
 	radio_fd = open(RADIO_IMAGE, O_RDONLY);
 	if (radio_fd < 0) {
 		_e("failed to open radio firmware");
@@ -516,9 +518,12 @@ int main(int argc, char** argv) {
 	}
 	_i("receive ID: [%02x %02x]", buf[0], buf[1]);
 
-	if (send_PSI(boot_fd) < 0) {
+	if ((ret = send_PSI(boot_fd)) < 0) {
 		_e("failed to upload PSI");
 		goto fail;
+	}
+	else {
+		_d("PSI download complete");
 	}
 
 	buf[0] = 0x00;
@@ -526,6 +531,9 @@ int main(int argc, char** argv) {
 	if (expect_data(boot_fd, buf, 2) < 0) {
 		_e("failed to receive PSI ACK");
 		goto fail;
+	}
+	else {
+		_d("received PSI ACK");
 	}
 
 	/*
