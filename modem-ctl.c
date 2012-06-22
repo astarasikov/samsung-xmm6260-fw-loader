@@ -777,7 +777,7 @@ int main(int argc, char** argv) {
 		_d("written ATAT to boot socket, waiting for ACK");
 	}
 	
-	usleep(500 * 1000);
+	//usleep(500 * 1000);
 
 	char buf[2];
 	if (receive(ctx.boot_fd, buf, 1) < 0) {
