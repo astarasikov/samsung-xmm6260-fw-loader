@@ -62,7 +62,7 @@ int read_select(int fd, unsigned timeout) {
 
 int receive(int fd, void *buf, size_t size) {
 	int ret;
-	if ((ret = read_select(fd, 50)) < 0) {
+	if ((ret = read_select(fd, DEFAULT_TIMEOUT)) < 0) {
 		_e("%s: failed to select the fd %d", __func__, fd);
 		return ret;
 	}
