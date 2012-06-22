@@ -267,7 +267,7 @@ static int i9100_wait_link_ready(fwloader_context *ctx) {
 		}
 
 		if (ret == 1) {
-			break;
+			return 0;
 		}
 
 		usleep(LINK_POLL_DELAY_US);
@@ -276,9 +276,9 @@ static int i9100_wait_link_ready(fwloader_context *ctx) {
 		diff = (tv_end.tv_sec - tv_start.tv_sec) * 1000;
 		diff += (tv_end.tv_usec - tv_start.tv_usec) / 1000;
 	} while (diff < LINK_TIMEOUT_MS);
-	
-	return 0;
 
+	ret = -ETIMEDOUT;
+	
 fail:
 	return ret;
 }
