@@ -231,12 +231,24 @@ typedef struct {
 	uint8_t padding;
 } __attribute__((packed)) psi_header_t;
 
-static int link_fd;
-static int boot_fd;
+typedef struct {
+	uint8_t data[76];
+} __attribute__((packed)) boot_info_t;
 
-static int radio_fd;
-static char *radio_data;
-struct stat radio_stat;
+typedef struct {
+	uint16_t check;
+	uint16_t cmd;
+	uint32_t data_size;
+} __attribute__((packed)) bootloader_cmd_t;
+
+typedef struct {
+	int link_fd;
+	int boot_fd;
+
+	int radio_fd;
+	char *radio_data;
+	struct stat radio_stat;
+} fwloader_context;
 
 static int i9100_ehci_setpower(bool enabled) {
 	int ret;
@@ -270,13 +282,13 @@ fail:
 	return ret;
 }
 
-static int i9100_link_set_active(bool enabled) {
+static int i9100_link_set_active(fwloader_context *ctx, bool enabled) {
 	unsigned status = enabled;
 	int ret;
 	unsigned long ioctl_code;
 
 	ioctl_code = IOCTL_LINK_CONTROL_ENABLE;
-	ret = c_ioctl(link_fd, ioctl_code, &status);
+	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
 
 	if (ret < 0) {
 		_d("failed to set link state to %d", enabled);
@@ -284,7 +296,7 @@ static int i9100_link_set_active(bool enabled) {
 	}
 
 	ioctl_code = IOCTL_LINK_CONTROL_ACTIVE;
-	ret = c_ioctl(link_fd, ioctl_code, &status);
+	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
 
 	if (ret < 0) {
 		_d("failed to set link active to %d", enabled);
@@ -296,11 +308,11 @@ fail:
 	return ret;
 }
 
-static int i9100_wait_link_ready(void) {
+static int i9100_wait_link_ready(fwloader_context *ctx) {
 	int ret;
 
 	while (1) {
-		ret = c_ioctl(link_fd, IOCTL_LINK_CONNECTED, 0);
+		ret = c_ioctl(ctx->link_fd, IOCTL_LINK_CONNECTED, 0);
 		if (ret < 0) {
 			goto fail;
 		}
@@ -318,12 +330,12 @@ fail:
 	return ret;
 }
 
-static int xmm6260_setpower(bool enabled) {
+static int xmm6260_setpower(fwloader_context *ctx, bool enabled) {
 	if (enabled) {
-		return c_ioctl(boot_fd, IOCTL_MODEM_ON, 0);
+		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_ON, 0);
 	}
 	else {
-		return c_ioctl(boot_fd, IOCTL_MODEM_OFF, 0);
+		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_OFF, 0);
 	}
 	return -1;
 }
@@ -341,7 +353,7 @@ static unsigned char calculateCRC(void* data,
 	return crc;
 }
 
-static int send_image(int fd, enum xmm6260_image type) {
+static int send_image(fwloader_context *ctx, enum xmm6260_image type) {
 	int ret;
 	size_t length = i9100_radio_parts[PSI].length;
 	size_t offset = i9100_radio_parts[PSI].offset;
@@ -351,10 +363,10 @@ static int send_image(int fd, enum xmm6260_image type) {
 
 	//dump some image bytes
 	_d("image start");
-	hexdump(radio_data + start, length);
+	hexdump(ctx->radio_data + start, length);
 
 	while (start < end) {
-		ret = write(fd, radio_data + start, end - offset);
+		ret = write(ctx->boot_fd, ctx->radio_data + start, end - offset);
 		if (ret < 0) {
 			_d("failed to write image chunk");
 			goto fail;
@@ -362,9 +374,9 @@ static int send_image(int fd, enum xmm6260_image type) {
 		start += ret;
 	}
 
-	unsigned char crc = calculateCRC(radio_data, offset, length);
+	unsigned char crc = calculateCRC(ctx->radio_data, offset, length);
 	
-	if ((ret = write(fd, &crc, 1)) < 1) {
+	if ((ret = write(ctx->boot_fd, &crc, 1)) < 1) {
 		_d("failed to write CRC");
 		goto fail;
 	}
@@ -375,7 +387,7 @@ fail:
 	return ret;
 }
 
-static int send_PSI(int fd) {
+static int send_PSI(fwloader_context *ctx) {
 	size_t length = i9100_radio_parts[PSI].length;
 
 	psi_header_t hdr = {
@@ -385,36 +397,36 @@ static int send_PSI(int fd) {
 	};
 	int ret = -1;
 	
-	if ((ret = write(fd, &hdr, sizeof(hdr))) != sizeof(hdr)) {
+	if ((ret = write(ctx->boot_fd, &hdr, sizeof(hdr))) != sizeof(hdr)) {
 		_d("%s: failed to write header, ret %d", __func__, ret);
 		goto fail;
 	}
 
-	if ((ret = send_image(fd, PSI)) < 0) {
+	if ((ret = send_image(ctx, PSI)) < 0) {
 		_e("failed to send PSI image");
 		goto fail;
 	}
 
 	for (int i = 0; i < 22; i++) {
 		char ack;
-		if (receive(fd, &ack, 1) < 1) {
+		if (receive(ctx->boot_fd, &ack, 1) < 1) {
 			_d("failed to read ACK byte %d", i);
 			goto fail;
 		}
 		_d("%02x ", ack);
 	}
 
-	if ((ret = expect_data(fd, "\x1", 1)) < 0) {
+	if ((ret = expect_data(ctx->boot_fd, "\x1", 1)) < 0) {
 		_d("failed to wait for first ACK");
 		goto fail;
 	}
 
-	if ((ret = expect_data(fd, "\x1", 1)) < 0) {
+	if ((ret = expect_data(ctx->boot_fd, "\x1", 1)) < 0) {
 		_d("failed to wait for second ACK");
 		goto fail;
 	}
 	
-	if ((ret = expect_data(boot_fd, "\x00\xaa", 2)) < 0) {
+	if ((ret = expect_data(ctx->boot_fd, "\x00\xaa", 2)) < 0) {
 		_e("failed to receive PSI ACK");
 		goto fail;
 	}
@@ -428,8 +440,9 @@ fail:
 	return ret;
 }
 
-static int send_EBL(int fd) {
+static int send_EBL(fwloader_context *ctx) {
 	int ret;
+	int fd = ctx->boot_fd;
 	unsigned length = i9100_radio_parts[PSI].length;
 
 	if ((ret = write(fd, &length, sizeof(length))) < 0) {
@@ -441,7 +454,7 @@ static int send_EBL(int fd) {
 		_e("failed to wait for EBL header ACK");
 	}
 	
-	if ((ret = send_image(fd, EBL)) < 0) {
+	if ((ret = send_image(ctx, EBL)) < 0) {
 		_e("failed to send EBL image");
 		goto fail;
 	}
@@ -460,13 +473,13 @@ static int send_SecureImage(int fd) {
 	return -1;
 }
 
-static int reboot_modem(bool hard) {
+static int reboot_modem(fwloader_context *ctx, bool hard) {
 	int ret;
 	/*
 	 * Disable the hardware to ensure consistent state
 	 */
 	if (hard) {	
-		if ((ret = xmm6260_setpower(false)) < 0) {
+		if ((ret = xmm6260_setpower(ctx, false)) < 0) {
 			_e("failed to disable xmm6260 power");
 			goto fail;
 		}
@@ -475,7 +488,7 @@ static int reboot_modem(bool hard) {
 		}
 	}
 
-	if ((ret = i9100_link_set_active(false)) < 0) {
+	if ((ret = i9100_link_set_active(ctx, false)) < 0) {
 		_e("failed to disable I9100 HSIC link");
 		goto fail;
 	}
@@ -495,7 +508,7 @@ static int reboot_modem(bool hard) {
 	 * Now, initialize the hardware
 	 */
 
-	if ((ret = i9100_link_set_active(true)) < 0) {
+	if ((ret = i9100_link_set_active(ctx, true)) < 0) {
 		_e("failed to enable I9100 HSIC link");
 		goto fail;
 	}
@@ -512,7 +525,7 @@ static int reboot_modem(bool hard) {
 	}
 
 	if (hard) {
-		if ((ret = xmm6260_setpower(true)) < 0) {
+		if ((ret = xmm6260_setpower(ctx, true)) < 0) {
 			_e("failed to enable xmm6260 power");
 			goto fail;
 		}
@@ -521,7 +534,7 @@ static int reboot_modem(bool hard) {
 		}
 	}
 
-	if ((ret = i9100_wait_link_ready()) < 0) {
+	if ((ret = i9100_wait_link_ready(ctx)) < 0) {
 		_e("failed to wait for link to get ready");
 		goto fail;
 	}
@@ -535,46 +548,49 @@ fail:
 
 int main(int argc, char** argv) {
 	int ret;
-	radio_fd = open(RADIO_IMAGE, O_RDONLY);
-	if (radio_fd < 0) {
+	fwloader_context ctx;
+	memset(&ctx, 0, sizeof(ctx));
+
+	ctx.radio_fd = open(RADIO_IMAGE, O_RDONLY);
+	if (ctx.radio_fd < 0) {
 		_e("failed to open radio firmware");
 		goto fail;
 	}
 	else {
-		_d("opened radio image %s, fd=%d", RADIO_IMAGE, radio_fd);
+		_d("opened radio image %s, fd=%d", RADIO_IMAGE, ctx.radio_fd);
 	}
 
-	if (fstat(radio_fd, &radio_stat) < 0) {
+	if (fstat(ctx.radio_fd, &ctx.radio_stat) < 0) {
 		_e("failed to stat radio image, error %s", strerror(errno));
 		goto fail;
 	}
 
-	radio_data = mmap(0, RADIO_MAP_SIZE, PROT_READ, MAP_SHARED,
-		radio_fd, 0);
-	if (radio_data == MAP_FAILED) {
+	ctx.radio_data = mmap(0, RADIO_MAP_SIZE, PROT_READ, MAP_SHARED,
+		ctx.radio_fd, 0);
+	if (ctx.radio_data == MAP_FAILED) {
 		_e("failed to mmap radio image, error %s", strerror(errno));
 		goto fail;
 	}
 
-	boot_fd = open(BOOT_DEV, O_RDWR);
-	if (boot_fd < 0) {
+	ctx.boot_fd = open(BOOT_DEV, O_RDWR);
+	if (ctx.boot_fd < 0) {
 		_e("failed to open boot device");
 		goto fail;
 	}
 	else {
-		_d("opened boot device %s, fd=%d", BOOT_DEV, boot_fd);
+		_d("opened boot device %s, fd=%d", BOOT_DEV, ctx.boot_fd);
 	}
 
-	link_fd = open(LINK_PM, O_RDWR);
-	if (link_fd < 0) {
+	ctx.link_fd = open(LINK_PM, O_RDWR);
+	if (ctx.link_fd < 0) {
 		_e("failed to open link device");
 		goto fail;
 	}
 	else {
-		_d("opened link device %s, fd=%d", LINK_PM, link_fd);
+		_d("opened link device %s, fd=%d", LINK_PM, ctx.link_fd);
 	}
 
-	if (reboot_modem(true)) {
+	if (reboot_modem(&ctx, true)) {
 		_e("failed to hard reset modem");
 	}
 	else {
@@ -584,7 +600,7 @@ int main(int argc, char** argv) {
 	/*
 	 * Now, actually load the firmware
 	 */
-	if (write(boot_fd, "ATAT", 4) != 4) {
+	if (write(ctx.boot_fd, "ATAT", 4) != 4) {
 		_e("failed to write ATAT to boot socket");
 		goto fail;
 	}
@@ -595,17 +611,17 @@ int main(int argc, char** argv) {
 	usleep(500 * 1000);
 
 	char buf[2];
-	if (receive(boot_fd, buf, 1) < 0) {
+	if (receive(ctx.boot_fd, buf, 1) < 0) {
 		_e("failed to receive bootloader ACK");
 		goto fail;
 	}
-	if (receive(boot_fd, buf + 1, 1) < 0) {
+	if (receive(ctx.boot_fd, buf + 1, 1) < 0) {
 		_e("failed to receive chip IP ACK");
 		goto fail;
 	}
 	_i("receive ID: [%02x %02x]", buf[0], buf[1]);
 
-	if ((ret = send_PSI(boot_fd)) < 0) {
+	if ((ret = send_PSI(&ctx)) < 0) {
 		_e("failed to upload PSI");
 		goto fail;
 	}
@@ -613,7 +629,7 @@ int main(int argc, char** argv) {
 		_d("PSI download complete");
 	}
 
-	if ((ret = send_EBL(boot_fd)) < 0) {
+	if ((ret = send_EBL(&ctx)) < 0) {
 		_e("failed to upload EBL");
 		goto fail;
 	}
@@ -621,7 +637,7 @@ int main(int argc, char** argv) {
 		_d("EBL download complete");
 	}
 
-	if ((ret = send_SecureImage(boot_fd)) < 0) {
+	if ((ret = send_SecureImage(ctx.boot_fd)) < 0) {
 		_e("failed to upload Secure Image");
 		goto fail;
 	}
@@ -629,7 +645,7 @@ int main(int argc, char** argv) {
 		_d("Secure Image download complete");
 	}
 
-	if (reboot_modem(false)) {
+	if (reboot_modem(&ctx, false)) {
 		_e("failed to soft reset modem");
 	}
 	else {
@@ -637,20 +653,20 @@ int main(int argc, char** argv) {
 	}
 
 fail:
-	if (radio_data != MAP_FAILED) {
-		munmap(radio_data, RADIO_MAP_SIZE);
+	if (ctx.radio_data != MAP_FAILED) {
+		munmap(ctx.radio_data, RADIO_MAP_SIZE);
 	}
 
-	if (link_fd >= 0) {
-		close(link_fd);
+	if (ctx.link_fd >= 0) {
+		close(ctx.link_fd);
 	}
 
-	if (radio_fd >= 0) {
-		close(radio_fd);
+	if (ctx.radio_fd >= 0) {
+		close(ctx.radio_fd);
 	}
 
-	if (boot_fd >= 0) {
-		close(boot_fd);
+	if (ctx.boot_fd >= 0) {
+		close(ctx.boot_fd);
 	}
 
 	return 0;
