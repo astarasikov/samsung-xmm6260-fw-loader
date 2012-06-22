@@ -52,6 +52,24 @@ TODO:
 #define LINK_POLL_DELAY_US (50 * 1000)
 #define LINK_TIMEOUT_MS 2000
 
+#define XMM_PSI_MAGIC 0x30
+#define PSI_ACK_MAGIC "\x00\xaa"
+
+#define EBL_HDR_ACK_MAGIC "\xcc\xcc"
+#define EBL_IMG_ACK_MAGIC "\x51\xa5"
+
+#define BL_END_MAGIC "\x00\x00"
+#define BL_END_MAGIC_LEN 2
+
+#define BL_RESET_MAGIC "\x01\x10\x11\x00" 
+#define BL_RESET_MAGIC_LEN 4
+
+#define SEC_DOWNLOAD_CHUNK 16384
+#define SEC_DOWNLOAD_DELAY_US (200 * 1000)
+
+#define FW_LOAD_ADDR 0x60300000
+#define NVDATA_LOAD_ADDR 0x60e80000
+
 #define RADIO_MAP_SIZE (16 << 20)
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
@@ -147,8 +165,6 @@ struct {
 		.need_ack = 0,
 	},
 };
-
-#define XMM_PSI_MAGIC 0x30
 
 typedef struct {
 	uint8_t magic;
@@ -369,7 +385,7 @@ static int send_PSI(fwloader_context *ctx) {
 		goto fail;
 	}
 	
-	if ((ret = expect_data(ctx->boot_fd, "\x00\xaa", 2)) < 0) {
+	if ((ret = expect_data(ctx->boot_fd, PSI_ACK_MAGIC, 2)) < 0) {
 		_e("failed to receive PSI ACK");
 		goto fail;
 	}
@@ -393,7 +409,7 @@ static int send_EBL(fwloader_context *ctx) {
 		goto fail;
 	}
 
-	if ((ret = expect_data(fd, "\xcc\xcc", 2)) < 0) {
+	if ((ret = expect_data(fd, EBL_HDR_ACK_MAGIC, 2)) < 0) {
 		_e("failed to wait for EBL header ACK");
 	}
 	
@@ -402,7 +418,7 @@ static int send_EBL(fwloader_context *ctx) {
 		goto fail;
 	}
 	
-	if ((ret = expect_data(fd, "\x51\xa5", 2)) < 0) {
+	if ((ret = expect_data(fd, EBL_IMG_ACK_MAGIC, 2)) < 0) {
 		_e("failed to wait for EBL image ACK");
 	}
 
@@ -555,7 +571,7 @@ static int send_image_addr(fwloader_context *ctx, uint32_t addr,
 
 	while (start < end) {
 		unsigned rest = end - start;
-		unsigned chunk = rest < 16384 ? rest : 16384;
+		unsigned chunk = rest < SEC_DOWNLOAD_CHUNK ? rest : SEC_DOWNLOAD_CHUNK;
 
 		ret = bootloader_cmd(ctx, ReqFlashWriteBlock, start, chunk);
 		if (ret < 0) {
@@ -566,7 +582,7 @@ static int send_image_addr(fwloader_context *ctx, uint32_t addr,
 		start += chunk;
 	}
 
-	usleep(200 * 1000);
+	usleep(SEC_DOWNLOAD_DELAY_US);
 
 fail:
 	return ret;
@@ -587,7 +603,7 @@ static int send_SecureImage(fwloader_context *ctx) {
 		_d("sent ReqSecStart");
 	}
 
-	if ((ret = send_image_addr(ctx, 0x60300000, FIRMWARE)) < 0) {
+	if ((ret = send_image_addr(ctx, FW_LOAD_ADDR, FIRMWARE)) < 0) {
 		_e("failed to send FIRMWARE image");
 		goto fail;
 	}
@@ -595,7 +611,7 @@ static int send_SecureImage(fwloader_context *ctx) {
 		_d("sent FIRMWARE image");
 	}
 	
-	if ((ret = send_image_addr(ctx, 0x60e80000, NVDATA)) < 0) {
+	if ((ret = send_image_addr(ctx, NVDATA_LOAD_ADDR, NVDATA)) < 0) {
 		_e("failed to send NVDATA image");
 		goto fail;
 	}
@@ -603,7 +619,9 @@ static int send_SecureImage(fwloader_context *ctx) {
 		_d("sent NVDATA image");
 	}
 
-	if ((ret = bootloader_cmd(ctx, ReqSecEnd, "\0\0", 2)) < 0) {
+	if ((ret = bootloader_cmd(ctx, ReqSecEnd,
+		BL_END_MAGIC, BL_END_MAGIC_LEN)) < 0)
+	{
 		_e("failed to write ReqSecEnd");
 		goto fail;
 	}
@@ -611,7 +629,8 @@ static int send_SecureImage(fwloader_context *ctx) {
 		_d("sent ReqSecEnd");
 	}
 
-	ret = bootloader_cmd(ctx, ReqForceHwReset, "\x01\x10\x11\x00", 4);
+	ret = bootloader_cmd(ctx, ReqForceHwReset,
+		BL_RESET_MAGIC, BL_RESET_MAGIC_LEN);
 	if (ret < 0) {
 		_e("failed to write ReqForceHwReset");
 		goto fail;
