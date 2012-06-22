@@ -408,7 +408,9 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 		goto done_or_fail;
 	}
 
-	uint16_t magic = (data_size & 0xffff) + cmd;
+	unsigned cmd_code = xmm6260_boot_cmd_desc[cmd].code;
+
+	uint16_t magic = (data_size & 0xffff) + cmd_code;
 	unsigned char *ptr = (unsigned char*)data;
 	for (size_t i = 0; i < data_size; i++) {
 		magic += ptr[i];
@@ -416,7 +418,7 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 
 	bootloader_cmd_t header = {
 		.check = magic,
-		.cmd = xmm6260_boot_cmd_desc[cmd].code,
+		.cmd = cmd_code,
 		.data_size = data_size,
 	};
 
@@ -429,6 +431,7 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 		ret = -ENOMEM;
 		goto done_or_fail;
 	}
+	memset(cmd_data, 0, buf_size);
 	memcpy(cmd_data, &header, sizeof(header));
 	memcpy(cmd_data + sizeof(header), data, data_size);
 
@@ -461,6 +464,8 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 		ret = -EINVAL;
 		goto done_or_fail;
 	}
+
+	hexdump(&ack, sizeof(ack));
 
 	if (ack.cmd != header.cmd) {
 		_e("ack cmd %x does not match request %x", ack.cmd, header.cmd);
@@ -500,6 +505,7 @@ static int ack_BootInfo(fwloader_context *ctx) {
 	}
 	else {
 		_d("received Boot Info");
+		hexdump(&info, sizeof(info));
 	}
 
 	if ((ret = bootloader_cmd(ctx, SetPortConf, &info, sizeof(info))) < 0) {
