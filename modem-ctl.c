@@ -65,7 +65,9 @@ TODO:
 #define BL_RESET_MAGIC_LEN 4
 
 #define SEC_DOWNLOAD_CHUNK 16384
-#define SEC_DOWNLOAD_DELAY_US (200 * 1000)
+#define SEC_DOWNLOAD_DELAY_US (500 * 1000)
+
+#define POST_BOOT_TIMEOUT_US (600 * 1000)
 
 #define FW_LOAD_ADDR 0x60300000
 #define NVDATA_LOAD_ADDR 0x60e80000
@@ -73,6 +75,15 @@ TODO:
 #define RADIO_MAP_SIZE (16 << 20)
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
+
+typedef struct {
+	int link_fd;
+	int boot_fd;
+
+	int radio_fd;
+	char *radio_data;
+	struct stat radio_stat;
+} fwloader_context;
 
 /*
  * Components of the Samsung XMM6260 firmware
@@ -182,117 +193,9 @@ typedef struct {
 	uint32_t data_size;
 } __attribute__((packed)) bootloader_cmd_t;
 
-typedef struct {
-	int link_fd;
-	int boot_fd;
-
-	int radio_fd;
-	char *radio_data;
-	struct stat radio_stat;
-} fwloader_context;
-
-static int i9100_ehci_setpower(bool enabled) {
-	int ret;
-	
-	_d("%s: enabled=%d", __func__, enabled);
-	
-	int ehci_fd = open(I9100_EHCI_PATH, O_RDWR);
-	if (ehci_fd < 0) {
-		_e("failed to open EHCI fd");
-		goto fail;
-	}
-	else {
-		_d("opened EHCI %s: fd=%d", I9100_EHCI_PATH, ehci_fd);
-	}
-
-	ret = write(ehci_fd, enabled ? "1" : "0", 1);
-
-	//must write exactly one byte
-	if (ret <= 0) {
-		_e("failed to set EHCI power");
-	}
-	else {
-		_d("set EHCI power");
-	}
-
-fail:
-	if (ehci_fd >= 0) {
-		close(ehci_fd);
-	}
-
-	return ret;
-}
-
-static int i9100_link_set_active(fwloader_context *ctx, bool enabled) {
-	unsigned status = enabled;
-	int ret;
-	unsigned long ioctl_code;
-
-	ioctl_code = IOCTL_LINK_CONTROL_ENABLE;
-	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
-
-	if (ret < 0) {
-		_d("failed to set link state to %d", enabled);
-		goto fail;
-	}
-
-	ioctl_code = IOCTL_LINK_CONTROL_ACTIVE;
-	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
-
-	if (ret < 0) {
-		_d("failed to set link active to %d", enabled);
-		goto fail;
-	}
-
-	return 0;
-fail:
-	return ret;
-}
-
-static int i9100_wait_link_ready(fwloader_context *ctx) {
-	int ret;
-
-	struct timeval tv_start = {};
-	struct timeval tv_end = {};
-
-	gettimeofday(&tv_start, 0);;
-
-	//link wakeup timeout in milliseconds
-	long diff = 0;
-
-	do {
-		ret = c_ioctl(ctx->link_fd, IOCTL_LINK_CONNECTED, 0);
-		if (ret < 0) {
-			goto fail;
-		}
-
-		if (ret == 1) {
-			return 0;
-		}
-
-		usleep(LINK_POLL_DELAY_US);
-		gettimeofday(&tv_end, 0);;
-
-		diff = (tv_end.tv_sec - tv_start.tv_sec) * 1000;
-		diff += (tv_end.tv_usec - tv_start.tv_usec) / 1000;
-	} while (diff < LINK_TIMEOUT_MS);
-
-	ret = -ETIMEDOUT;
-	
-fail:
-	return ret;
-}
-
-static int xmm6260_setpower(fwloader_context *ctx, bool enabled) {
-	if (enabled) {
-		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_ON, 0);
-	}
-	else {
-		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_OFF, 0);
-	}
-	return -1;
-}
-
+/*
+ * Bootloader protocol
+ */
 static unsigned char calculateCRC(void* data,
 	size_t offset, size_t length)
 {
@@ -643,8 +546,136 @@ fail:
 	return ret;
 }
 
+/*
+ * Power management
+ */
+static int i9100_ehci_setpower(bool enabled) {
+	int ret;
+	
+	_d("%s: enabled=%d", __func__, enabled);
+	
+	int ehci_fd = open(I9100_EHCI_PATH, O_RDWR);
+	if (ehci_fd < 0) {
+		_e("failed to open EHCI fd");
+		goto fail;
+	}
+	else {
+		_d("opened EHCI %s: fd=%d", I9100_EHCI_PATH, ehci_fd);
+	}
+
+	ret = write(ehci_fd, enabled ? "1" : "0", 1);
+
+	//must write exactly one byte
+	if (ret <= 0) {
+		_e("failed to set EHCI power");
+	}
+	else {
+		_d("set EHCI power");
+	}
+
+fail:
+	if (ehci_fd >= 0) {
+		close(ehci_fd);
+	}
+
+	return ret;
+}
+
+static int i9100_link_set_active(fwloader_context *ctx, bool enabled) {
+	unsigned status = enabled;
+	int ret;
+	unsigned long ioctl_code;
+
+	ioctl_code = IOCTL_LINK_CONTROL_ACTIVE;
+	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
+
+	if (ret < 0) {
+		_d("failed to set link active to %d", enabled);
+		goto fail;
+	}
+
+	return 0;
+fail:
+	return ret;
+}
+
+static int i9100_link_set_enabled(fwloader_context *ctx, bool enabled) {
+	unsigned status = enabled;
+	int ret;
+	unsigned long ioctl_code;
+
+	ioctl_code = IOCTL_LINK_CONTROL_ENABLE;
+	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
+
+	if (ret < 0) {
+		_d("failed to set link state to %d", enabled);
+		goto fail;
+	}
+
+	return 0;
+fail:
+	return ret;
+}
+
+static int i9100_wait_link_ready(fwloader_context *ctx) {
+	int ret;
+
+	struct timeval tv_start = {};
+	struct timeval tv_end = {};
+
+	gettimeofday(&tv_start, 0);;
+
+	//link wakeup timeout in milliseconds
+	long diff = 0;
+
+	do {
+		ret = c_ioctl(ctx->link_fd, IOCTL_LINK_CONNECTED, 0);
+		if (ret < 0) {
+			goto fail;
+		}
+
+		if (ret == 1) {
+			return 0;
+		}
+
+		usleep(LINK_POLL_DELAY_US);
+		gettimeofday(&tv_end, 0);;
+
+		diff = (tv_end.tv_sec - tv_start.tv_sec) * 1000;
+		diff += (tv_end.tv_usec - tv_start.tv_usec) / 1000;
+	} while (diff < LINK_TIMEOUT_MS);
+
+	ret = -ETIMEDOUT;
+	
+fail:
+	return ret;
+}
+
+static int xmm6260_setpower(fwloader_context *ctx, bool enabled) {
+	if (enabled) {
+		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_ON, 0);
+	}
+	else {
+		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_OFF, 0);
+	}
+	return -1;
+}
+
+
 static int reboot_modem(fwloader_context *ctx, bool hard) {
 	int ret;
+	
+	//wait for link to become ready before redetection
+	if (!hard) {
+		if ((ret = i9100_wait_link_ready(ctx)) < 0) {
+			_e("failed to wait for link to get ready for redetection");
+			goto fail;
+		}
+		else {
+			_d("link ready for redetection");
+		}
+	}
+
 	/*
 	 * Disable the hardware to ensure consistent state
 	 */
@@ -657,14 +688,15 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 			_d("disabled xmm6260 power");
 		}
 	}
-	if ((ret = i9100_link_set_active(ctx, false)) < 0) {
+	
+	if ((ret = i9100_link_set_enabled(ctx, false)) < 0) {
 		_e("failed to disable I9100 HSIC link");
 		goto fail;
 	}
 	else {
 		_d("disabled I9100 HSIC link");
 	}
-
+	
 	if ((ret = i9100_ehci_setpower(false)) < 0) {
 		_e("failed to disable I9100 EHCI");
 		goto fail;
@@ -672,19 +704,27 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 	else {
 		_d("disabled I9100 EHCI");
 	}
-
+	
+	if ((ret = i9100_link_set_active(ctx, false)) < 0) {
+		_e("failed to deactivate I9100 HSIC link");
+		goto fail;
+	}
+	else {
+		_d("deactivated I9100 HSIC link");
+	}
+	
 	/*
 	 * Now, initialize the hardware
 	 */
-
-	if ((ret = i9100_link_set_active(ctx, true)) < 0) {
+	
+	if ((ret = i9100_link_set_enabled(ctx, true)) < 0) {
 		_e("failed to enable I9100 HSIC link");
 		goto fail;
 	}
 	else {
 		_d("enabled I9100 HSIC link");
 	}
-
+	
 	if ((ret = i9100_ehci_setpower(true)) < 0) {
 		_e("failed to enable I9100 EHCI");
 		goto fail;
@@ -693,6 +733,14 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 		_d("enabled I9100 EHCI");
 	}
 
+	if ((ret = i9100_link_set_active(ctx, true)) < 0) {
+		_e("failed to activate I9100 HSIC link");
+		goto fail;
+	}
+	else {
+		_d("activated I9100 HSIC link");
+	}
+	
 	if (hard) {
 		if ((ret = xmm6260_setpower(ctx, true)) < 0) {
 			_e("failed to enable xmm6260 power");
@@ -715,7 +763,7 @@ fail:
 	return ret;
 }
 
-int main(int argc, char** argv) {
+static int boot_modem(void) {
 	int ret;
 	fwloader_context ctx;
 	memset(&ctx, 0, sizeof(ctx));
@@ -777,8 +825,6 @@ int main(int argc, char** argv) {
 		_d("written ATAT to boot socket, waiting for ACK");
 	}
 	
-	//usleep(500 * 1000);
-
 	char buf[2];
 	if (receive(ctx.boot_fd, buf, 1) < 0) {
 		_e("failed to receive bootloader ACK");
@@ -822,6 +868,8 @@ int main(int argc, char** argv) {
 		_d("Secure Image download complete");
 	}
 
+	usleep(POST_BOOT_TIMEOUT_US);
+
 	if ((ret = reboot_modem(&ctx, false))) {
 		_e("failed to soft reset modem");
 		goto fail;
@@ -849,5 +897,20 @@ fail:
 		close(ctx.boot_fd);
 	}
 
-	return 0;
+	return ret;
+}
+
+int main(int argc, char** argv) {
+	int ret;
+
+	if ((ret = boot_modem()) < 0) {
+		_e("failed to boot modem");
+		goto fail;
+	}
+	else {
+		_d("done loading firmware");
+	}
+
+fail:
+	return ret;
 }
