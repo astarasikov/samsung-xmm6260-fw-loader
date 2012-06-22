@@ -336,12 +336,12 @@ static int send_image(int fd, enum xmm6260_image type) {
 
 	//dump some image bytes
 	unsigned *u = (unsigned*)(radio_data + start);
-	_d("PSI image [%08x %08x %08x %08x]", u[0], u[1], u[2], u[3]);
+	_d("image start [%08x %08x %08x %08x]", u[0], u[1], u[2], u[3]);
 
 	while (start < end) {
 		ret = write(fd, radio_data + start, end - offset);
 		if (ret < 0) {
-			_d("failed to write PSI chunk");
+			_d("failed to write image chunk");
 			goto fail;
 		}
 		start += ret;
@@ -375,7 +375,10 @@ static int send_PSI(int fd) {
 		goto fail;
 	}
 
-	send_image(fd, PSI);
+	if ((ret = send_image(fd, PSI)) < 0) {
+		_e("failed to send PSI image");
+		goto fail;
+	}
 
 	for (int i = 0; i < 22; i++) {
 		char ack;
@@ -414,7 +417,31 @@ fail:
 }
 
 static int send_EBL(int fd) {
-	return -1;
+	int ret;
+	unsigned length = i9100_radio_parts[PSI].length;
+
+	if ((ret = write(fd, &length, sizeof(length))) < 0) {
+		_e("failed to write EBL length");
+		goto fail;
+	}
+
+	if ((ret = expect_data(fd, "\xcc\xcc", 2)) < 0) {
+		_e("failed to wait for EBL header ACK");
+	}
+	
+	if ((ret = send_image(fd, EBL)) < 0) {
+		_e("failed to send EBL image");
+		goto fail;
+	}
+	
+	if ((ret = expect_data(fd, "\x51\xa5", 2)) < 0) {
+		_e("failed to wait for EBL image ACK");
+	}
+
+	return 0;
+
+fail:
+	return ret;
 }
 
 static int send_SecureImage(int fd) {
