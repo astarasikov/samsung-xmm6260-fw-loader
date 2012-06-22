@@ -24,16 +24,17 @@
 
 #include "log.h"
 
-void hexdump(char* data, size_t size) {
+void hexdump(void* data, size_t size) {
 	if (size < 1) {
 		return;
 	}
+	char *_data = (char*)data;
 	char __hd_buf[DUMP_SIZE * 3 + 1];
 
 	size_t len = size < DUMP_SIZE ? size : DUMP_SIZE;
 	memset(__hd_buf, 0, sizeof(__hd_buf));
 	for (int i = 0; i < len; i++) {
-		snprintf(__hd_buf + i * 3, 4, "%02x ", data[i]);	
+		snprintf(__hd_buf + i * 3, 4, "%02x ", _data[i]);	
 	}
 
 	__hd_buf[sizeof(__hd_buf) - 1] = '\0';

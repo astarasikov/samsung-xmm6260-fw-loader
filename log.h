@@ -48,6 +48,6 @@
 
 #define DUMP_SIZE 16
 
-void hexdump(char* data, size_t size);
+void hexdump(void* data, size_t size);
 
 #endif //__LOG_H__
