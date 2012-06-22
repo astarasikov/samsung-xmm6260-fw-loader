@@ -73,6 +73,24 @@ TODO:
 #define _e(fmt, x...) _p("E/" fmt, ##x)
 #define _i(fmt, x...) _p("I/" fmt, ##x)
 
+#define DUMP_SIZE 16
+static char __hd_buf[DUMP_SIZE * 3 + 1];
+
+static inline void hexdump(char* data, size_t size) {
+	if (size < 1) {
+		return;
+	}
+
+	size_t len = size < DUMP_SIZE ? size : DUMP_SIZE;
+	memset(__hd_buf, 0, sizeof(__hd_buf));
+	for (int i = 0; i < len; i++) {
+		snprintf(__hd_buf + i * 3, 4, "%02x ", data[i]);	
+	}
+
+	__hd_buf[sizeof(__hd_buf) - 1] = '\0';
+	_d("%s", __hd_buf);
+}
+
 static int c_ioctl(int fd, unsigned long code, void* data) {
 	int ret;
 
@@ -127,10 +145,7 @@ static int expect_data(int fd, void *data, size_t size) {
 		return ret;
 	}
 	ret = memcmp(buf, data, size);
-	
-	if (ret != 0) {
-		_d("received %02x", buf[0]);
-	}
+	hexdump(buf, size);
 
 	return ret;
 }
@@ -335,8 +350,8 @@ static int send_image(int fd, enum xmm6260_image type) {
 	size_t end = length + start;
 
 	//dump some image bytes
-	unsigned *u = (unsigned*)(radio_data + start);
-	_d("image start [%08x %08x %08x %08x]", u[0], u[1], u[2], u[3]);
+	_d("image start");
+	hexdump(radio_data + start, length);
 
 	while (start < end) {
 		ret = write(fd, radio_data + start, end - offset);
@@ -389,20 +404,17 @@ static int send_PSI(int fd) {
 		_d("%02x ", ack);
 	}
 
-	unsigned char buf[2] = {0x1};
-	if ((ret = expect_data(fd, buf, 1)) < 0) {
+	if ((ret = expect_data(fd, "\x1", 1)) < 0) {
 		_d("failed to wait for first ACK");
 		goto fail;
 	}
 
-	if ((ret = expect_data(fd, buf, 1)) < 0) {
+	if ((ret = expect_data(fd, "\x1", 1)) < 0) {
 		_d("failed to wait for second ACK");
 		goto fail;
 	}
 	
-	buf[0] = 0x00;
-	buf[1] = 0xAA;
-	if ((ret = expect_data(boot_fd, buf, 2)) < 0) {
+	if ((ret = expect_data(boot_fd, "\x00\xaa", 2)) < 0) {
 		_e("failed to receive PSI ACK");
 		goto fail;
 	}
