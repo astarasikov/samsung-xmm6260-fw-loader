@@ -473,17 +473,17 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 		goto done_or_fail;
 	}
 
-	if ((ret = receive(ctx->boot_fd, data, data_size)) < 0) {
+	if ((ret = receive(ctx->boot_fd, cmd_data, cmd_size)) < 0) {
 		_e("failed to receive reply data");
 		goto done_or_fail;
 	}
 
-	if (ret != data_size) {
-		_e("received %x bytes of %x for reply data", ret, data_size);
+	if (ret != cmd_size) {
+		_e("received %x bytes of %x for reply data", ret, cmd_size);
 		ret = -EINVAL;
 		goto done_or_fail;
 	}
-
+	hexdump(cmd_data, cmd_size);
 
 done_or_fail:
 

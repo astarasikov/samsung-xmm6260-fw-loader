@@ -67,7 +67,7 @@ int receive(int fd, void *buf, size_t size) {
 		return ret;
 	}
 	else {
-		_d("%s: selected fd %d for %d", __func__, ret, fd);
+		_d("%s: selected %d fds for fd=%d", __func__, ret, fd);
 	}
 
 	return read(fd, buf, size);
