@@ -90,7 +90,7 @@ static struct xmm6260_offset {
 		.length = 0x9d8000,
 	},
 	[NVDATA] = {
-		.offset = 0x6406e00,
+		.offset = 0xa00000,
 		.length = 2 << 20,
 	}
 };
@@ -522,8 +522,93 @@ fail:
 	return ret;
 }
 
-static int send_SecureImage(int fd) {
-	return -1;
+static int send_image_addr(fwloader_context *ctx, uint32_t addr,
+	enum xmm6260_image type)
+{
+	int ret = 0;
+	if ((ret = bootloader_cmd(ctx, ReqFlashSetAddress, &addr, 4)) < 0) {
+		_e("failed to send ReqFlashSetAddress");
+		goto fail;
+	}
+	else {
+		_d("sent ReqFlashSetAddress");
+	}
+
+	uint32_t offset = i9100_radio_parts[type].offset;
+	uint32_t length = i9100_radio_parts[type].length;
+
+	char *start = ctx->radio_data + offset;
+	char *end = start + length;
+
+	while (start < end) {
+		unsigned rest = end - start;
+		unsigned chunk = rest < 16384 ? rest : 16384;
+
+		ret = bootloader_cmd(ctx, ReqFlashWriteBlock, start, chunk);
+		if (ret < 0) {
+			_e("failed to send data chunk");
+			goto fail;
+		}
+
+		start += chunk;
+	}
+
+	usleep(200 * 1000);
+
+fail:
+	return ret;
+}
+
+static int send_SecureImage(fwloader_context *ctx) {
+	int ret = 0;
+
+	uint32_t sec_off = i9100_radio_parts[SECURE_IMAGE].offset;
+	uint32_t sec_len = i9100_radio_parts[SECURE_IMAGE].length;
+	void *sec_img = ctx->radio_data + sec_off;
+	
+	if ((ret = bootloader_cmd(ctx, ReqSecStart, sec_img, sec_len)) < 0) {
+		_e("failed to write ReqSecStart");
+		goto fail;
+	}
+	else {
+		_d("sent ReqSecStart");
+	}
+
+	if ((ret = send_image_addr(ctx, 0x60300000, FIRMWARE)) < 0) {
+		_e("failed to send FIRMWARE image");
+		goto fail;
+	}
+	else {
+		_d("sent FIRMWARE image");
+	}
+	
+	if ((ret = send_image_addr(ctx, 0x60e80000, NVDATA)) < 0) {
+		_e("failed to send NVDATA image");
+		goto fail;
+	}
+	else {
+		_d("sent NVDATA image");
+	}
+
+	if ((ret = bootloader_cmd(ctx, ReqSecEnd, "\0\0", 2)) < 0) {
+		_e("failed to write ReqSecEnd");
+		goto fail;
+	}
+	else {
+		_d("sent ReqSecEnd");
+	}
+
+	ret = bootloader_cmd(ctx, ReqForceHwReset, "\x01\x10\x11\x00", 4);
+	if (ret < 0) {
+		_e("failed to write ReqForceHwReset");
+		goto fail;
+	}
+	else {
+		_d("sent ReqForceHwReset");
+	}
+
+fail:
+	return ret;
 }
 
 static int reboot_modem(fwloader_context *ctx, bool hard) {
@@ -697,7 +782,7 @@ int main(int argc, char** argv) {
 		_d("Boot Info ACK done");
 	}
 
-	if ((ret = send_SecureImage(ctx.boot_fd)) < 0) {
+	if ((ret = send_SecureImage(&ctx)) < 0) {
 		_e("failed to upload Secure Image");
 		goto fail;
 	}
@@ -705,8 +790,9 @@ int main(int argc, char** argv) {
 		_d("Secure Image download complete");
 	}
 
-	if (reboot_modem(&ctx, false)) {
+	if ((ret = reboot_modem(&ctx, false))) {
 		_e("failed to soft reset modem");
+		goto fail;
 	}
 	else {
 		_d("modem soft reset done");
