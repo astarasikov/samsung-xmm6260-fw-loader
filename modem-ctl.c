@@ -19,24 +19,11 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
+#include "common.h"
+#include "log.h"
+#include "io_helpers.h" 
 
-#include <getopt.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <sys/ioctl.h>
-
-//for timeval
-#include <sys/time.h>
-
-//for mmap
-#include <sys/mman.h>
-#include <sys/stat.h>
-
+//Samsung IOCTLs
 #include "modem_prj.h"
 
 #if 0
@@ -47,108 +34,6 @@ TODO:
 3. integrate with libsamsung-ipc @ replicant/FSO
 
 #endif
-
-/*
- * IO helper functions
- */
-
-#define DEBUG 1
-
-#ifndef SILENT
-	#define LOG_TAG "xmm6260-sec"
-	#define _p(fmt, x...) \
-		do {\
-			printf("[" LOG_TAG "]: " fmt "\n", ##x); \
-		} while (0)
-#else
-	#define _p(fmt, x...) do {} while (0)
-#endif
-
-#ifdef DEBUG
-	#define _d(fmt, x...) _p("D/" fmt, ##x)
-#else
-	#define _d(fmt, x...) do {} while (0)
-#endif
-
-#define _e(fmt, x...) _p("E/" fmt, ##x)
-#define _i(fmt, x...) _p("I/" fmt, ##x)
-
-#define DUMP_SIZE 16
-static char __hd_buf[DUMP_SIZE * 3 + 1];
-
-static inline void hexdump(char* data, size_t size) {
-	if (size < 1) {
-		return;
-	}
-
-	size_t len = size < DUMP_SIZE ? size : DUMP_SIZE;
-	memset(__hd_buf, 0, sizeof(__hd_buf));
-	for (int i = 0; i < len; i++) {
-		snprintf(__hd_buf + i * 3, 4, "%02x ", data[i]);	
-	}
-
-	__hd_buf[sizeof(__hd_buf) - 1] = '\0';
-	_d("%s", __hd_buf);
-}
-
-static int c_ioctl(int fd, unsigned long code, void* data) {
-	int ret;
-
-	if (!data) {
-		ret = ioctl(fd, code);
-	}
-	else {
-		ret = ioctl(fd, code, data);
-	}
-
-	if (ret < 0) {
-		_e("ioctl fd=%d code=%lx failed: %s", fd, code, strerror(errno));
-	}
-	else {
-		_d("ioctl fd=%d code=%lx OK", fd, code);
-	}
-
-	return ret;
-}
-
-static inline int read_select(int fd, unsigned timeout) {
-	struct timeval tv = {
-		tv.tv_sec = timeout / 1000,
-		tv.tv_usec = 1000 * (timeout % 1000),
-	};
-
-	fd_set read_set;
-	FD_ZERO(&read_set);
-	FD_SET(fd, &read_set);
-
-	return select(fd + 1, &read_set, 0, 0, &tv);
-}
-
-static inline int receive(int fd, void *buf, size_t size) {
-	int ret;
-	if ((ret = read_select(fd, 0)) < 0) {
-		_e("%s: failed to select the fd %d", __func__, fd);
-		return ret;
-	}
-	else {
-		_d("%s: selected fd %d for %d", __func__, ret, fd);
-	}
-
-	return read(fd, buf, size);
-}
-
-static int expect_data(int fd, void *data, size_t size) {
-	int ret;
-	char buf[size];
-	if ((ret = receive(fd, buf, size)) < 0) {
-		_e("failed to receive data");
-		return ret;
-	}
-	ret = memcmp(buf, data, size);
-	hexdump(buf, size);
-
-	return ret;
-}
 
 /*
  * I9100 specific implementation
