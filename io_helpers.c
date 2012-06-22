@@ -25,6 +25,8 @@
 #include "io_helpers.h"
 #include "log.h"
 
+#define DEFAULT_TIMEOUT 50
+
 int c_ioctl(int fd, unsigned long code, void* data) {
 	int ret;
 
@@ -60,7 +62,7 @@ int read_select(int fd, unsigned timeout) {
 
 int receive(int fd, void *buf, size_t size) {
 	int ret;
-	if ((ret = read_select(fd, 0)) < 0) {
+	if ((ret = read_select(fd, 50)) < 0) {
 		_e("%s: failed to select the fd %d", __func__, fd);
 		return ret;
 	}
