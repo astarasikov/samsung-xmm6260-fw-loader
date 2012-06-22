@@ -47,9 +47,10 @@ TODO:
 
 #define RADIO_IMAGE "/dev/block/mmcblk0p8"
 #define NVDATA_IMAGE "/efs/nv_data.bin"
-
 #define I9100_EHCI_PATH "/sys/devices/platform/s5p-ehci/ehci_power"
 
+#define LINK_POLL_DELAY_US (50 * 1000)
+#define LINK_TIMEOUT_MS 2000
 
 #define RADIO_MAP_SIZE (16 << 20)
 
@@ -235,7 +236,15 @@ fail:
 static int i9100_wait_link_ready(fwloader_context *ctx) {
 	int ret;
 
-	while (1) {
+	struct timeval tv_start = {};
+	struct timeval tv_end = {};
+
+	gettimeofday(&tv_start, 0);;
+
+	//link wakeup timeout in milliseconds
+	long diff = 0;
+
+	do {
 		ret = c_ioctl(ctx->link_fd, IOCTL_LINK_CONNECTED, 0);
 		if (ret < 0) {
 			goto fail;
@@ -245,8 +254,12 @@ static int i9100_wait_link_ready(fwloader_context *ctx) {
 			break;
 		}
 
-		usleep(50 * 1000);
-	}
+		usleep(LINK_POLL_DELAY_US);
+		gettimeofday(&tv_end, 0);;
+
+		diff = (tv_end.tv_sec - tv_start.tv_sec) * 1000;
+		diff += (tv_end.tv_usec - tv_start.tv_usec) / 1000;
+	} while (diff < LINK_TIMEOUT_MS);
 	
 	return 0;
 
