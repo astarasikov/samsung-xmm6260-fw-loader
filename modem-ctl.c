@@ -53,6 +53,8 @@ TODO:
 
 #define RADIO_MAP_SIZE (16 << 20)
 
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
+
 /*
  * Components of the Samsung XMM6260 firmware
  */
@@ -98,14 +100,51 @@ static struct xmm6260_offset {
  */
 
 enum xmm6260_boot_cmd {
-	SetPortConf        = 0x86,
+	SetPortConf,
 
-	ReqSecStart        = 0x204,
-	ReqSecEnd          = 0x205,
-	ReqForceHwReset    = 0x208,
+	ReqSecStart,
+	ReqSecEnd,
+	ReqForceHwReset,
 
-	ReqFlashSetAddress = 0x802,
-	ReqFlashWriteBlock = 0x804
+	ReqFlashSetAddress,
+	ReqFlashWriteBlock,
+};
+
+struct {
+	unsigned code;
+	size_t data_size;
+	bool need_ack;
+} xmm6260_boot_cmd_desc[] = {
+	[SetPortConf] = {
+		.code = 0x86,
+		.data_size = 0x800,
+		.need_ack = 1,
+	},
+	[ReqSecStart] = {
+		.code = 0x204,
+		.data_size = 0x4000,
+		.need_ack = 1,
+	},
+	[ReqSecEnd] = {
+		.code = 0x205,
+		.data_size = 0x4000,
+		.need_ack = 1,
+	},
+	[ReqForceHwReset] = {
+		.code = 0x208,
+		.data_size = 0x4000,
+		.need_ack = 0,
+	},
+	[ReqFlashSetAddress] = {
+		.code = 0x802,
+		.data_size = 0x4000,
+		.need_ack = 1,
+	},
+	[ReqFlashWriteBlock] = {
+		.code = 0x804,
+		.data_size = 0x4000,
+		.need_ack = 0,
+	},
 };
 
 #define XMM_PSI_MAGIC 0x30
@@ -240,8 +279,14 @@ static unsigned char calculateCRC(void* data,
 
 static int send_image(fwloader_context *ctx, enum xmm6260_image type) {
 	int ret;
-	size_t length = i9100_radio_parts[PSI].length;
-	size_t offset = i9100_radio_parts[PSI].offset;
+	
+	if (type >= ARRAY_SIZE(i9100_radio_parts)) {
+		_e("bad image type %x", type);
+		goto fail;
+	}
+
+	size_t length = i9100_radio_parts[type].length;
+	size_t offset = i9100_radio_parts[type].offset;
 
 	size_t start = offset;
 	size_t end = length + start;
@@ -328,7 +373,7 @@ fail:
 static int send_EBL(fwloader_context *ctx) {
 	int ret;
 	int fd = ctx->boot_fd;
-	unsigned length = i9100_radio_parts[PSI].length;
+	unsigned length = i9100_radio_parts[EBL].length;
 
 	if ((ret = write(fd, &length, sizeof(length))) < 0) {
 		_e("failed to write EBL length");
@@ -346,6 +391,123 @@ static int send_EBL(fwloader_context *ctx) {
 	
 	if ((ret = expect_data(fd, "\x51\xa5", 2)) < 0) {
 		_e("failed to wait for EBL image ACK");
+	}
+
+	return 0;
+
+fail:
+	return ret;
+}
+
+static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
+	void *data, size_t data_size)
+{
+	int ret = 0;
+	if (cmd >= ARRAY_SIZE(xmm6260_boot_cmd_desc)) {
+		_e("bad command %x\n", cmd);
+		goto done_or_fail;
+	}
+
+	uint16_t magic = (data_size & 0xffff) + cmd;
+	unsigned char *ptr = (unsigned char*)data;
+	for (size_t i = 0; i < data_size; i++) {
+		magic += ptr[i];
+	}
+
+	bootloader_cmd_t header = {
+		.check = magic,
+		.cmd = xmm6260_boot_cmd_desc[cmd].code,
+		.data_size = data_size,
+	};
+
+	size_t cmd_size = xmm6260_boot_cmd_desc[cmd].data_size;
+	size_t buf_size = cmd_size + sizeof(header);
+
+	char *cmd_data = (char*)malloc(buf_size);
+	if (!cmd_data) {
+		_e("failed to allocate command buffer");
+		ret = -ENOMEM;
+		goto done_or_fail;
+	}
+	memcpy(cmd_data, &header, sizeof(header));
+	memcpy(cmd_data + sizeof(header), data, data_size);
+
+	if ((ret = write(ctx->boot_fd, cmd_data, buf_size)) < 0) {
+		_e("failed to write command to socket");
+		goto done_or_fail;
+	}
+
+	if (ret != buf_size) {
+		_e("written %d bytes of %d", ret, buf_size);
+		ret = -EINVAL;
+		goto done_or_fail;
+	}
+
+	_d("sent command %x magic=%x", header.cmd, header.check);
+
+	if (!xmm6260_boot_cmd_desc[cmd].need_ack) {
+		ret = 0;
+		goto done_or_fail;
+	}
+
+	bootloader_cmd_t ack = {};
+	if ((ret = receive(ctx->boot_fd, &ack, sizeof(ack))) < 0) {
+		_e("failed to receive ack for cmd %x", header.cmd);
+		goto done_or_fail;
+	}
+
+	if (ret != sizeof(ack)) {
+		_e("received %x bytes of %x for ack", ret, sizeof(ack));
+		ret = -EINVAL;
+		goto done_or_fail;
+	}
+
+	if (ack.cmd != header.cmd) {
+		_e("ack cmd %x does not match request %x", ack.cmd, header.cmd);
+		ret = -EINVAL;
+		goto done_or_fail;
+	}
+
+	if ((ret = receive(ctx->boot_fd, data, data_size)) < 0) {
+		_e("failed to receive reply data");
+		goto done_or_fail;
+	}
+
+	if (ret != data_size) {
+		_e("received %x bytes of %x for reply data", ret, data_size);
+		ret = -EINVAL;
+		goto done_or_fail;
+	}
+
+
+done_or_fail:
+
+	if (cmd_data) {
+		free(cmd_data);
+	}
+
+	return ret;
+}
+
+static int ack_BootInfo(fwloader_context *ctx) {
+	int ret;
+	boot_info_t info;
+	
+	if ((ret = receive(ctx->boot_fd, &info, sizeof(info))) != sizeof(info)) {
+		_e("failed to receive Boot Info ret=%d", ret);
+		ret = -1;
+		goto fail;
+	}
+	else {
+		_d("received Boot Info");
+	}
+
+	if ((ret = bootloader_cmd(ctx, SetPortConf, &info, sizeof(info))) < 0) {
+		_e("failed to send SetPortConf command");
+		goto fail;
+	}
+	else {
+		_d("sent SetPortConf command");
 	}
 
 	return 0;
@@ -372,7 +534,6 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 			_d("disabled xmm6260 power");
 		}
 	}
-
 	if ((ret = i9100_link_set_active(ctx, false)) < 0) {
 		_e("failed to disable I9100 HSIC link");
 		goto fail;
@@ -522,6 +683,14 @@ int main(int argc, char** argv) {
 		_d("EBL download complete");
 	}
 
+	if ((ret = ack_BootInfo(&ctx)) < 0) {
+		_e("failed to receive Boot Info");
+		goto fail;
+	}
+	else {
+		_d("Boot Info ACK done");
+	}
+
 	if ((ret = send_SecureImage(ctx.boot_fd)) < 0) {
 		_e("failed to upload Secure Image");
 		goto fail;
@@ -536,6 +705,8 @@ int main(int argc, char** argv) {
 	else {
 		_d("modem soft reset done");
 	}
+
+	_i("online");
 
 fail:
 	if (ctx.radio_data != MAP_FAILED) {
