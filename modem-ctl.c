@@ -326,9 +326,42 @@ static unsigned char calculateCRC(void* data,
 	return crc;
 }
 
-static int send_PSI(int fd) {
+static int send_image(int fd, enum xmm6260_image type) {
+	int ret;
 	size_t length = i9100_radio_parts[PSI].length;
 	size_t offset = i9100_radio_parts[PSI].offset;
+
+	size_t start = offset;
+	size_t end = length + start;
+
+	//dump some image bytes
+	unsigned *u = (unsigned*)(radio_data + start);
+	_d("PSI image [%08x %08x %08x %08x]", u[0], u[1], u[2], u[3]);
+
+	while (start < end) {
+		ret = write(fd, radio_data + start, end - offset);
+		if (ret < 0) {
+			_d("failed to write PSI chunk");
+			goto fail;
+		}
+		start += ret;
+	}
+
+	unsigned char crc = calculateCRC(radio_data, offset, length);
+	
+	if ((ret = write(fd, &crc, 1)) < 1) {
+		_d("failed to write CRC");
+		goto fail;
+	}
+
+	return 0;
+
+fail:
+	return ret;
+}
+
+static int send_PSI(int fd) {
+	size_t length = i9100_radio_parts[PSI].length;
 
 	psi_header_t hdr = {
 		.magic = XMM_PSI_MAGIC,
@@ -342,28 +375,7 @@ static int send_PSI(int fd) {
 		goto fail;
 	}
 
-	size_t start = offset;
-	size_t end = length + start;
-
-	//dump some image bytes
-	unsigned *u = (unsigned*)(radio_data + start);
-	_d("PSI image [%08x %08x %08x %08x]", u[0], u[1], u[2], u[3]);
-
-	while (start < end) {
-		size_t written = write(fd, radio_data + start, end - offset);
-		if (written < 0) {
-			_d("failed to write PSI chunk");
-			goto fail;
-		}
-		start += written;
-	}
-
-	unsigned char crc = calculateCRC(radio_data, offset, length);
-	
-	if ((ret = write(fd, &crc, 1)) < 1) {
-		_d("failed to write CRC");
-		goto fail;
-	}
+	send_image(fd, PSI);
 
 	for (int i = 0; i < 22; i++) {
 		char ack;
