@@ -76,7 +76,7 @@ int receive(int fd, void *buf, size_t size) {
 int expect_data(int fd, void *data, size_t size) {
 	int ret;
 	char buf[size];
-	if ((ret = receive(fd, buf, size)) < 0) {
+	if ((ret = receive(fd, buf, size)) != size) {
 		_e("failed to receive data");
 		return ret;
 	}
