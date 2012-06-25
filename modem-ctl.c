@@ -28,11 +28,12 @@
 
 #if 0
 TODO:
-
-1. I9100/I9250 detection (probe)
-2. I9250 firmware offsets
-3. integrate with libsamsung-ipc @ replicant/FSO
-
+0. finish I9250 loader
+1. Separate board-specific and shared code
+2. I9100/I9250 detection (probe)
+3. I9250 firmware offsets
+4. integrate with libsamsung-ipc @ replicant/FSO
+5. nvdata checking/regeneration
 #endif
 
 /*
@@ -228,7 +229,7 @@ static int send_image(fwloader_context *ctx, enum xmm6260_image type) {
 	hexdump(ctx->radio_data + start, length);
 
 	while (start < end) {
-		ret = write(ctx->boot_fd, ctx->radio_data + start, end - offset);
+		ret = write(ctx->boot_fd, ctx->radio_data + start, end - start);
 		if (ret < 0) {
 			_d("failed to write image chunk");
 			goto fail;
@@ -237,10 +238,13 @@ static int send_image(fwloader_context *ctx, enum xmm6260_image type) {
 	}
 
 	unsigned char crc = calculateCRC(ctx->radio_data, offset, length);
-	
+
 	if ((ret = write(ctx->boot_fd, &crc, 1)) < 1) {
 		_d("failed to write CRC");
 		goto fail;
+	}
+	else {
+		_d("wrote CRC %x", crc);
 	}
 
 	return 0;
@@ -547,6 +551,105 @@ fail:
 }
 
 /*
+ * modemctl generic functions
+ */
+
+static int modemctl_link_set_active(fwloader_context *ctx, bool enabled) {
+	unsigned status = enabled;
+	int ret;
+	unsigned long ioctl_code;
+
+	ioctl_code = IOCTL_LINK_CONTROL_ACTIVE;
+	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
+
+	if (ret < 0) {
+		_d("failed to set link active to %d", enabled);
+		goto fail;
+	}
+
+	return 0;
+fail:
+	return ret;
+}
+
+static int modemctl_link_set_enabled(fwloader_context *ctx, bool enabled) {
+	unsigned status = enabled;
+	int ret;
+	unsigned long ioctl_code;
+
+	ioctl_code = IOCTL_LINK_CONTROL_ENABLE;
+	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
+
+	if (ret < 0) {
+		_d("failed to set link state to %d", enabled);
+		goto fail;
+	}
+
+	return 0;
+fail:
+	return ret;
+}
+
+static int modemctl_wait_link_ready(fwloader_context *ctx) {
+	int ret;
+
+	struct timeval tv_start = {};
+	struct timeval tv_end = {};
+
+	gettimeofday(&tv_start, 0);;
+
+	//link wakeup timeout in milliseconds
+	long diff = 0;
+
+	do {
+		ret = c_ioctl(ctx->link_fd, IOCTL_LINK_CONNECTED, 0);
+		if (ret < 0) {
+			goto fail;
+		}
+
+		if (ret == 1) {
+			return 0;
+		}
+
+		usleep(LINK_POLL_DELAY_US);
+		gettimeofday(&tv_end, 0);;
+
+		diff = (tv_end.tv_sec - tv_start.tv_sec) * 1000;
+		diff += (tv_end.tv_usec - tv_start.tv_usec) / 1000;
+	} while (diff < LINK_TIMEOUT_MS);
+
+	ret = -ETIMEDOUT;
+	
+fail:
+	return ret;
+}
+
+static int modemctl_modem_power(fwloader_context *ctx, bool enabled) {
+	if (enabled) {
+		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_ON, 0);
+	}
+	else {
+		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_OFF, 0);
+	}
+	return -1;
+}
+
+static int modemctl_modem_boot_power(fwloader_context *ctx, bool enabled) {
+	if (enabled) {
+		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_BOOT_ON, 0);
+	}
+	else {
+		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_BOOT_OFF, 0);
+	}
+	return -1;
+}
+
+
+/*
+ * i9200 (Galaxy S2) board-specific code
+ */
+
+/*
  * Power management
  */
 static int i9100_ehci_setpower(bool enabled) {
@@ -581,93 +684,12 @@ fail:
 	return ret;
 }
 
-static int i9100_link_set_active(fwloader_context *ctx, bool enabled) {
-	unsigned status = enabled;
-	int ret;
-	unsigned long ioctl_code;
-
-	ioctl_code = IOCTL_LINK_CONTROL_ACTIVE;
-	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
-
-	if (ret < 0) {
-		_d("failed to set link active to %d", enabled);
-		goto fail;
-	}
-
-	return 0;
-fail:
-	return ret;
-}
-
-static int i9100_link_set_enabled(fwloader_context *ctx, bool enabled) {
-	unsigned status = enabled;
-	int ret;
-	unsigned long ioctl_code;
-
-	ioctl_code = IOCTL_LINK_CONTROL_ENABLE;
-	ret = c_ioctl(ctx->link_fd, ioctl_code, &status);
-
-	if (ret < 0) {
-		_d("failed to set link state to %d", enabled);
-		goto fail;
-	}
-
-	return 0;
-fail:
-	return ret;
-}
-
-static int i9100_wait_link_ready(fwloader_context *ctx) {
-	int ret;
-
-	struct timeval tv_start = {};
-	struct timeval tv_end = {};
-
-	gettimeofday(&tv_start, 0);;
-
-	//link wakeup timeout in milliseconds
-	long diff = 0;
-
-	do {
-		ret = c_ioctl(ctx->link_fd, IOCTL_LINK_CONNECTED, 0);
-		if (ret < 0) {
-			goto fail;
-		}
-
-		if (ret == 1) {
-			return 0;
-		}
-
-		usleep(LINK_POLL_DELAY_US);
-		gettimeofday(&tv_end, 0);;
-
-		diff = (tv_end.tv_sec - tv_start.tv_sec) * 1000;
-		diff += (tv_end.tv_usec - tv_start.tv_usec) / 1000;
-	} while (diff < LINK_TIMEOUT_MS);
-
-	ret = -ETIMEDOUT;
-	
-fail:
-	return ret;
-}
-
-static int xmm6260_setpower(fwloader_context *ctx, bool enabled) {
-	if (enabled) {
-		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_ON, 0);
-	}
-	else {
-		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_OFF, 0);
-	}
-	return -1;
-}
-
-
-static int reboot_modem(fwloader_context *ctx, bool hard) {
+static int reboot_modem_i9100(fwloader_context *ctx, bool hard) {
 	int ret;
 	
 	//wait for link to become ready before redetection
 	if (!hard) {
-		if ((ret = i9100_wait_link_ready(ctx)) < 0) {
+		if ((ret = modemctl_wait_link_ready(ctx)) < 0) {
 			_e("failed to wait for link to get ready for redetection");
 			goto fail;
 		}
@@ -680,7 +702,7 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 	 * Disable the hardware to ensure consistent state
 	 */
 	if (hard) {	
-		if ((ret = xmm6260_setpower(ctx, false)) < 0) {
+		if ((ret = modemctl_modem_power(ctx, false)) < 0) {
 			_e("failed to disable xmm6260 power");
 			goto fail;
 		}
@@ -689,7 +711,7 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 		}
 	}
 	
-	if ((ret = i9100_link_set_enabled(ctx, false)) < 0) {
+	if ((ret = modemctl_link_set_enabled(ctx, false)) < 0) {
 		_e("failed to disable I9100 HSIC link");
 		goto fail;
 	}
@@ -705,7 +727,7 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 		_d("disabled I9100 EHCI");
 	}
 	
-	if ((ret = i9100_link_set_active(ctx, false)) < 0) {
+	if ((ret = modemctl_link_set_active(ctx, false)) < 0) {
 		_e("failed to deactivate I9100 HSIC link");
 		goto fail;
 	}
@@ -717,7 +739,7 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 	 * Now, initialize the hardware
 	 */
 	
-	if ((ret = i9100_link_set_enabled(ctx, true)) < 0) {
+	if ((ret = modemctl_link_set_enabled(ctx, true)) < 0) {
 		_e("failed to enable I9100 HSIC link");
 		goto fail;
 	}
@@ -733,7 +755,7 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 		_d("enabled I9100 EHCI");
 	}
 
-	if ((ret = i9100_link_set_active(ctx, true)) < 0) {
+	if ((ret = modemctl_link_set_active(ctx, true)) < 0) {
 		_e("failed to activate I9100 HSIC link");
 		goto fail;
 	}
@@ -742,7 +764,7 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 	}
 	
 	if (hard) {
-		if ((ret = xmm6260_setpower(ctx, true)) < 0) {
+		if ((ret = modemctl_modem_power(ctx, true)) < 0) {
 			_e("failed to enable xmm6260 power");
 			goto fail;
 		}
@@ -751,7 +773,7 @@ static int reboot_modem(fwloader_context *ctx, bool hard) {
 		}
 	}
 
-	if ((ret = i9100_wait_link_ready(ctx)) < 0) {
+	if ((ret = modemctl_wait_link_ready(ctx)) < 0) {
 		_e("failed to wait for link to get ready");
 		goto fail;
 	}
@@ -763,7 +785,7 @@ fail:
 	return ret;
 }
 
-static int boot_modem(void) {
+static int boot_modem_i9100(void) {
 	int ret;
 	fwloader_context ctx;
 	memset(&ctx, 0, sizeof(ctx));
@@ -807,8 +829,9 @@ static int boot_modem(void) {
 		_d("opened link device %s, fd=%d", LINK_PM, ctx.link_fd);
 	}
 
-	if (reboot_modem(&ctx, true)) {
+	if (reboot_modem_i9100(&ctx, true)) {
 		_e("failed to hard reset modem");
+		goto fail;
 	}
 	else {
 		_d("modem hard reset done");
@@ -824,7 +847,7 @@ static int boot_modem(void) {
 	else {
 		_d("written ATAT to boot socket, waiting for ACK");
 	}
-	
+
 	char buf[2];
 	if (receive(ctx.boot_fd, buf, 1) < 0) {
 		_e("failed to receive bootloader ACK");
@@ -870,7 +893,7 @@ static int boot_modem(void) {
 
 	usleep(POST_BOOT_TIMEOUT_US);
 
-	if ((ret = reboot_modem(&ctx, false))) {
+	if ((ret = reboot_modem_i9100(&ctx, false))) {
 		_e("failed to soft reset modem");
 		goto fail;
 	}
@@ -900,10 +923,321 @@ fail:
 	return ret;
 }
 
+
+static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
+	int ret;
+
+	if (!hard) {
+		return 0;
+	}
+	/*
+	 * Disable the hardware to ensure consistent state
+	 */
+	if ((ret = modemctl_modem_power(ctx, false)) < 0) {
+		_e("failed to disable modem power");
+		goto fail;
+	}
+	else {
+		_d("disabled modem power");
+	}
+	
+	if ((ret = modemctl_modem_boot_power(ctx, false)) < 0) {
+		_e("failed to disable modem boot power");
+		goto fail;
+	}
+	else {
+		_d("disabled modem boot power");
+	}
+
+	/*
+	 * Now, initialize the hardware
+	 */
+	if ((ret = modemctl_modem_boot_power(ctx, true)) < 0) {
+		_e("failed to enable modem boot power");
+		goto fail;
+	}
+	else {
+		_d("enabled modem boot power");
+	}
+
+	if ((ret = modemctl_modem_power(ctx, true)) < 0) {
+		_e("failed to enable modem power");
+		goto fail;
+	}
+	else {
+		_d("enabled modem power");
+	}
+
+fail:
+	return ret;
+}
+
+/*
+ * i9250 (Galaxy Nexus) board-specific code
+ */
+
+#define I9250_RADIO_IMAGE "/dev/block/platform/omap/omap_hsmmc.0/by-name/radio"
+#define I9250_SECOND_BOOT_DEV "/dev/umts_boot1"
+
+#define I9250_BOOT_LAST_MARKER 0x0030ffff
+#define I9250_BOOT_REPLY_MAX 20
+
+static int send_image_i9250(fwloader_context *ctx, enum xmm6260_image type) {
+	int ret;
+	
+	if (type >= ARRAY_SIZE(i9100_radio_parts)) {
+		_e("bad image type %x", type);
+		goto fail;
+	}
+
+	size_t length = i9100_radio_parts[type].length;
+	size_t offset = i9100_radio_parts[type].offset;
+
+	size_t start = offset;
+	size_t end = length + start;
+
+	//dump some image bytes
+	_d("image start");
+	hexdump(ctx->radio_data + start, length);
+
+	size_t chunk_size = 0xdfc;
+
+	while (start < end) {
+		size_t remaining = end - start;
+		size_t curr_chunk = chunk_size < remaining ? chunk_size : remaining;
+		ret = write(ctx->boot_fd, ctx->radio_data + start, curr_chunk);
+		if (ret < 0) {
+			_d("failed to write image chunk");
+			goto fail;
+		}
+		start += ret;
+	}
+
+	unsigned char crc = calculateCRC(ctx->radio_data, offset, length);
+	uint32_t crc32 = (crc << 24) | 0xffffff;
+	if ((ret = write(ctx->boot_fd, &crc32, 4)) != 4) {
+		_d("failed to write CRC");
+		goto fail;
+	}
+	else {
+		_d("wrote CRC %x", crc);
+	}
+
+	return 0;
+
+fail:
+	return ret;
+}
+
+static int send_PSI_i9250(fwloader_context *ctx) {
+	size_t length = i9100_radio_parts[PSI].length;
+
+	psi_header_t hdr = {
+		.magic = XMM_PSI_MAGIC,
+		.length = length,
+		.padding = 0xff,
+	};
+	int ret = -1;
+
+#if 0
+	if ((ret = write(ctx->boot_fd, &hdr, sizeof(hdr))) != sizeof(hdr)) {
+		_d("%s: failed to write header, ret %d", __func__, ret);
+		goto fail;
+	}
+#endif
+	if ((ret = write(ctx->boot_fd, "\xff\xf0\x00\x30", 4)) < 0) {
+		_d("%s: failed to write header, ret %d", __func__, ret);
+		goto fail;
+	}
+
+	if ((ret = send_image_i9250(ctx, PSI)) < 0) {
+		_e("failed to send PSI image");
+		goto fail;
+	}
+
+	char expected_acks[4][4] = {
+		"\xff\xff\xff\x01",
+		"\xff\xff\xff\x01",
+		"\x02\x00\x00\x00",
+		"\x01\xdd\x00\x00",
+	};
+
+	for (int i = 0; i < ARRAY_SIZE(expected_acks); i++) {
+		ret = expect_data(ctx->boot_fd, expected_acks[i], 4);
+		if (ret < 0) {
+			_d("failed to wait for ack %d", i);
+			goto fail;
+		}
+	}
+	_d("received PSI ACK");
+
+	return 0;
+
+fail:
+	return ret;
+}
+
+static int boot_modem_i9250(void) {
+	int ret;
+	fwloader_context ctx;
+	memset(&ctx, 0, sizeof(ctx));
+
+	ctx.radio_fd = open(I9250_RADIO_IMAGE, O_RDONLY);
+	if (ctx.radio_fd < 0) {
+		_e("failed to open radio firmware");
+		goto fail;
+	}
+	else {
+		_d("opened radio image %s, fd=%d", I9250_RADIO_IMAGE, ctx.radio_fd);
+	}
+
+	if (fstat(ctx.radio_fd, &ctx.radio_stat) < 0) {
+		_e("failed to stat radio image, error %s", strerror(errno));
+		goto fail;
+	}
+
+	ctx.radio_data = mmap(0, RADIO_MAP_SIZE, PROT_READ, MAP_SHARED,
+		ctx.radio_fd, 0);
+	if (ctx.radio_data == MAP_FAILED) {
+		_e("failed to mmap radio image, error %s", strerror(errno));
+		goto fail;
+	}
+
+	ctx.boot_fd = open(BOOT_DEV, O_RDWR);
+	if (ctx.boot_fd < 0) {
+		_e("failed to open boot device");
+		goto fail;
+	}
+	else {
+		_d("opened boot device %s, fd=%d", BOOT_DEV, ctx.boot_fd);
+	}
+
+	if (reboot_modem_i9250(&ctx, true) < 0) {
+		_e("failed to hard reset modem");
+		goto fail;
+	}
+	else {
+		_d("modem hard reset done");
+	}
+
+	/*
+	 * Now, actually load the firmware
+	 */
+	for (int i = 0; i < 2; i++) {
+		if (write(ctx.boot_fd, "ATAT", 4) != 4) {
+			_e("failed to write ATAT to boot socket");
+			goto fail;
+		}
+		else {
+			_d("written ATAT to boot socket, waiting for ACK");
+		}
+		read_select(ctx.boot_fd, 100);
+	}
+	
+	if ((ret = read_select(ctx.boot_fd, 100)) < 0) {
+		_e("failed to wait for bootloader ready state");
+		goto fail;
+	}
+	else {
+		_d("ready for PSI upload");
+	}
+
+	ret = -ETIMEDOUT;
+	for (int i = 0; i < I9250_BOOT_REPLY_MAX; i++) {
+		uint32_t id_buf;
+		if ((ret = receive(ctx.boot_fd, (void*)&id_buf, 4)) != 4) {
+			_e("failed receiving bootloader reply");
+			goto fail;
+		}
+		_d("got bootloader reply %08x", id_buf);
+		if (id_buf == I9250_BOOT_LAST_MARKER) {
+			ret = 0;
+			break;
+		}
+	}
+
+	if (ret < 0) {
+		_e("bootloader id marker not received");
+		goto fail;
+	}
+	else {
+		_d("got bootloader id marker");
+	}
+
+	if ((ret = send_PSI_i9250(&ctx)) < 0) {
+		_e("failed to upload PSI");
+		goto fail;
+	}
+	else {
+		_d("PSI download complete");
+	}
+	
+	close(ctx.boot_fd);
+	ctx.boot_fd = open(I9250_SECOND_BOOT_DEV, O_RDWR);
+	if (ctx.boot_fd < 0) {
+		_e("failed to open " I9250_SECOND_BOOT_DEV " control device");
+		goto fail;
+	}
+	else {
+		_d("opened boot device %s, fd=%d", I9250_SECOND_BOOT_DEV, ctx.boot_fd);
+	}
+
+	if ((ret = send_EBL(&ctx)) < 0) {
+		_e("failed to upload EBL");
+		goto fail;
+	}
+	else {
+		_d("EBL download complete");
+	}
+
+	if ((ret = ack_BootInfo(&ctx)) < 0) {
+		_e("failed to receive Boot Info");
+		goto fail;
+	}
+	else {
+		_d("Boot Info ACK done");
+	}
+
+	if ((ret = send_SecureImage(&ctx)) < 0) {
+		_e("failed to upload Secure Image");
+		goto fail;
+	}
+	else {
+		_d("Secure Image download complete");
+	}
+
+	usleep(POST_BOOT_TIMEOUT_US);
+
+	if ((ret = reboot_modem_i9250(&ctx, false))) {
+		_e("failed to soft reset modem");
+		goto fail;
+	}
+	else {
+		_d("modem soft reset done");
+	}
+
+	_i("online");
+
+fail:
+	if (ctx.radio_data != MAP_FAILED) {
+		munmap(ctx.radio_data, RADIO_MAP_SIZE);
+	}
+
+	if (ctx.radio_fd >= 0) {
+		close(ctx.radio_fd);
+	}
+
+	if (ctx.boot_fd >= 0) {
+		close(ctx.boot_fd);
+	}
+
+	return ret;
+}
+
 int main(int argc, char** argv) {
 	int ret;
 
-	if ((ret = boot_modem()) < 0) {
+	if ((ret = boot_modem_i9250()) < 0) {
 		_e("failed to boot modem");
 		goto fail;
 	}
