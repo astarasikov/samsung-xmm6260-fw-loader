@@ -318,6 +318,7 @@ static int send_EBL(fwloader_context *ctx) {
 
 	if ((ret = expect_data(fd, EBL_HDR_ACK_MAGIC, 2)) < 0) {
 		_e("failed to wait for EBL header ACK");
+		goto fail;
 	}
 	
 	if ((ret = send_image(ctx, EBL)) < 0) {
@@ -327,6 +328,7 @@ static int send_EBL(fwloader_context *ctx) {
 	
 	if ((ret = expect_data(fd, EBL_IMG_ACK_MAGIC, 2)) < 0) {
 		_e("failed to wait for EBL image ACK");
+		goto fail;
 	}
 
 	return 0;
@@ -982,6 +984,8 @@ fail:
 #define I9250_BOOT_LAST_MARKER 0x0030ffff
 #define I9250_BOOT_REPLY_MAX 20
 
+#define I9250_PSI_START_MAGIC "\xff\xf0\x00\x30"
+
 static int send_image_i9250(fwloader_context *ctx, enum xmm6260_image type) {
 	int ret;
 	
@@ -1031,15 +1035,9 @@ fail:
 
 static int send_PSI_i9250(fwloader_context *ctx) {
 	size_t length = i9100_radio_parts[PSI].length;
-
-	psi_header_t hdr = {
-		.magic = XMM_PSI_MAGIC,
-		.length = length,
-		.padding = 0xff,
-	};
 	int ret = -1;
 
-	if ((ret = write(ctx->boot_fd, "\xff\xf0\x00\x30", 4)) < 0) {
+	if ((ret = write(ctx->boot_fd, I9250_PSI_START_MAGIC, 4)) < 0) {
 		_d("%s: failed to write header, ret %d", __func__, ret);
 		goto fail;
 	}
@@ -1064,6 +1062,53 @@ static int send_PSI_i9250(fwloader_context *ctx) {
 		}
 	}
 	_d("received PSI ACK");
+
+	return 0;
+
+fail:
+	return ret;
+}
+
+static int send_EBL_i9250(fwloader_context *ctx) {
+	int ret;
+	int fd = ctx->boot_fd;
+	unsigned length = i9100_radio_parts[EBL].length;
+	
+	if ((ret = write(fd, "\x04\x00\x00\x00", 4)) != 4) {
+		_e("failed to write EBL '4' magic");
+		goto fail;
+	}
+
+	if ((ret = write(fd, &length, sizeof(length))) != sizeof(length)) {
+		_e("failed to write EBL length");
+		goto fail;
+	}
+
+	if ((ret = expect_data(fd, "\x02\x00\x00\x00", 4)) < 0) {
+		_e("failed to wait for EBL ack '2'");
+		goto fail;
+	}
+
+	if ((ret = expect_data(fd, "\xcc\xcc\x00\x00", 4)) < 0) {
+		_e("failed to wait for EBL header ACK");
+		goto fail;
+	}
+	
+	length++;
+	if ((ret = write(fd, &length, sizeof(length))) != sizeof(length)) {
+		_e("failed to write EBL length + 1");
+		goto fail;
+	}
+	
+	if ((ret = send_image_i9250(ctx, EBL)) < 0) {
+		_e("failed to send EBL image");
+		goto fail;
+	}
+	
+	if ((ret = expect_data(fd, EBL_IMG_ACK_MAGIC, 2)) < 0) {
+		_e("failed to wait for EBL image ACK");
+		goto fail;
+	}
 
 	return 0;
 
@@ -1127,6 +1172,8 @@ static int boot_modem_i9250(void) {
 		}
 		read_select(ctx.boot_fd, 100);
 	}
+
+	//FIXME: make sure it does not timeout or add the retry in the ril library
 	
 	if ((ret = read_select(ctx.boot_fd, 100)) < 0) {
 		_e("failed to wait for bootloader ready state");
@@ -1173,10 +1220,10 @@ static int boot_modem_i9250(void) {
 		goto fail;
 	}
 	else {
-		_d("opened boot device %s, fd=%d", I9250_SECOND_BOOT_DEV, ctx.boot_fd);
+		_d("opened second boot device %s, fd=%d", I9250_SECOND_BOOT_DEV, ctx.boot_fd);
 	}
 
-	if ((ret = send_EBL(&ctx)) < 0) {
+	if ((ret = send_EBL_i9250(&ctx)) < 0) {
 		_e("failed to upload EBL");
 		goto fail;
 	}
