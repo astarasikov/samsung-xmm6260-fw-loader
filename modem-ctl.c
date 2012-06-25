@@ -1278,7 +1278,14 @@ fail:
 int main(int argc, char** argv) {
 	int ret;
 
-	if ((ret = boot_modem_i9250()) < 0) {
+	if (argc > 1) {
+		ret = boot_modem_i9100();
+	}
+	else {
+		ret = boot_modem_i9250();
+	}
+
+	if (ret < 0) {
 		_e("failed to boot modem");
 		goto fail;
 	}
