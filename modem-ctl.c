@@ -1039,12 +1039,6 @@ static int send_PSI_i9250(fwloader_context *ctx) {
 	};
 	int ret = -1;
 
-#if 0
-	if ((ret = write(ctx->boot_fd, &hdr, sizeof(hdr))) != sizeof(hdr)) {
-		_d("%s: failed to write header, ret %d", __func__, ret);
-		goto fail;
-	}
-#endif
 	if ((ret = write(ctx->boot_fd, "\xff\xf0\x00\x30", 4)) < 0) {
 		_d("%s: failed to write header, ret %d", __func__, ret);
 		goto fail;
