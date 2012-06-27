@@ -353,10 +353,14 @@ typedef struct {
 } __attribute__((packed)) boot_info_i9250_t;
 
 typedef struct {
-	uint16_t check;
-	uint16_t cmd;
 	uint32_t data_size;
-} __attribute__((packed)) bootloader_cmd_i9250_t;
+	uint16_t magic;
+	uint16_t cmd;
+} __attribute__((packed)) bootloader_cmd_hdr_t;
+
+typedef struct {
+	char data[6];
+} __attribute__((packed)) bootloader_cmd_tail_t;
 
 static int bootloader_cmd_i9250(fwloader_context *ctx,
 	enum xmm6260_boot_cmd cmd, void *data, size_t data_size)
@@ -375,14 +379,17 @@ static int bootloader_cmd_i9250(fwloader_context *ctx,
 		magic += ptr[i];
 	}
 
-	bootloader_cmd_i9250_t header = {
-		.check = magic,
-		.cmd = cmd_code,
+	bootloader_cmd_hdr_t header = {
 		.data_size = data_size,
+		.magic = 2,//magic,
+		.cmd = cmd_code,
+	};
+
+	bootloader_cmd_tail_t tail = {
 	};
 
 	size_t cmd_size = i9250_boot_cmd_desc[cmd].data_size;
-	size_t buf_size = cmd_size + sizeof(header);
+	size_t buf_size = cmd_size + sizeof(header) + sizeof(tail);
 
 	char *cmd_data = (char*)malloc(buf_size);
 	if (!cmd_data) {
@@ -408,7 +415,7 @@ static int bootloader_cmd_i9250(fwloader_context *ctx,
 		goto done_or_fail;
 	}
 
-	_d("sent command %x magic=%x", header.cmd, header.check);
+	_d("sent command %x magic=%x", header.cmd, header.magic);
 
 	if (!i9250_boot_cmd_desc[cmd].need_ack) {
 		ret = 0;
