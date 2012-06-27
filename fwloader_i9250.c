@@ -379,17 +379,19 @@ static int bootloader_cmd_i9250(fwloader_context *ctx,
 		magic += ptr[i];
 	}
 
-	bootloader_cmd_hdr_t header = {
-		.data_size = data_size,
-		.magic = 2,//magic,
-		.cmd = cmd_code,
-	};
+	_d("data_size %d", data_size);
 
 	bootloader_cmd_tail_t tail = {
 	};
 
-	size_t cmd_size = i9250_boot_cmd_desc[cmd].data_size;
-	size_t buf_size = cmd_size + sizeof(header) + sizeof(tail);
+	bootloader_cmd_hdr_t header = {
+		.data_size = data_size + sizeof(tail),
+		.magic = 2,//magic,
+		.cmd = cmd_code,
+	};
+
+	//size_t cmd_size = i9250_boot_cmd_desc[cmd].data_size;
+	size_t buf_size = data_size + sizeof(header) + sizeof(tail);
 
 	char *cmd_data = (char*)malloc(buf_size);
 	if (!cmd_data) {
@@ -400,6 +402,7 @@ static int bootloader_cmd_i9250(fwloader_context *ctx,
 	memset(cmd_data, 0, buf_size);
 	memcpy(cmd_data, &header, sizeof(header));
 	memcpy(cmd_data + sizeof(header), data, data_size);
+	memcpy(cmd_data + sizeof(header) + data_size, &tail, sizeof(tail));
 
 	_d("bootloader cmd packet");
 	hexdump(cmd_data, buf_size);
@@ -422,6 +425,8 @@ static int bootloader_cmd_i9250(fwloader_context *ctx,
 		goto done_or_fail;
 	}
 
+	ret = 0;
+#if 0
 	bootloader_cmd_t ack = {};
 	if ((ret = receive(ctx->boot_fd, &ack, sizeof(ack))) < 0) {
 		_e("failed to receive ack for cmd %x", header.cmd);
@@ -453,6 +458,7 @@ static int bootloader_cmd_i9250(fwloader_context *ctx,
 		goto done_or_fail;
 	}
 	hexdump(cmd_data, cmd_size);
+#endif
 
 done_or_fail:
 
