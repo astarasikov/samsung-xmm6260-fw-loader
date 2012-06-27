@@ -984,9 +984,18 @@ fail:
 #define I9250_BOOT_LAST_MARKER 0x0030ffff
 #define I9250_BOOT_REPLY_MAX 20
 
-#define I9250_PSI_START_MAGIC "\xff\xf0\x00\x30"
+#define I9250_GENERAL_ACK "\x02\x00\x00\x00"
 
-static int send_image_i9250(fwloader_context *ctx, enum xmm6260_image type) {
+#define I9250_PSI_START_MAGIC "\xff\xf0\x00\x30"
+#define I9250_PSI_CMD_EXEC "\x08\x00\x00\x00"
+#define I9250_PSI_EXEC_DATA "\x00\x00\x00\x00\x02\x00\x02\x00"
+#define I9250_PSI_READY_ACK "\x00\xaa\x00\x00" 
+
+#define I9250_EBL_IMG_ACK_MAGIC "\x02\x00\x00\x00"
+
+static int send_image_i9250(fwloader_context *ctx,
+	enum xmm6260_image type, bool need_crc)
+{
 	int ret;
 	
 	if (type >= ARRAY_SIZE(i9100_radio_parts)) {
@@ -999,6 +1008,8 @@ static int send_image_i9250(fwloader_context *ctx, enum xmm6260_image type) {
 
 	size_t start = offset;
 	size_t end = length + start;
+
+	if (type == EBL) { end += 4;}
 
 	//dump some image bytes
 	_d("image start");
@@ -1015,6 +1026,12 @@ static int send_image_i9250(fwloader_context *ctx, enum xmm6260_image type) {
 			goto fail;
 		}
 		start += ret;
+	}
+
+	_d("sent image type=%d", type);
+
+	if (!need_crc) {
+		return 0;
 	}
 
 	unsigned char crc = calculateCRC(ctx->radio_data, offset, length);
@@ -1042,7 +1059,7 @@ static int send_PSI_i9250(fwloader_context *ctx) {
 		goto fail;
 	}
 
-	if ((ret = send_image_i9250(ctx, PSI)) < 0) {
+	if ((ret = send_image_i9250(ctx, PSI, true)) < 0) {
 		_e("failed to send PSI image");
 		goto fail;
 	}
@@ -1075,7 +1092,7 @@ static int send_EBL_i9250(fwloader_context *ctx) {
 	unsigned length = i9100_radio_parts[EBL].length;
 	
 	if ((ret = write(fd, "\x04\x00\x00\x00", 4)) != 4) {
-		_e("failed to write EBL '4' magic");
+		_e("failed to write length of EBL length ('4') ");
 		goto fail;
 	}
 
@@ -1084,8 +1101,8 @@ static int send_EBL_i9250(fwloader_context *ctx) {
 		goto fail;
 	}
 
-	if ((ret = expect_data(fd, "\x02\x00\x00\x00", 4)) < 0) {
-		_e("failed to wait for EBL ack '2'");
+	if ((ret = expect_data(fd, I9250_GENERAL_ACK, 4)) < 0) {
+		_e("failed to wait for EBL length ACK");
 		goto fail;
 	}
 
@@ -1100,14 +1117,20 @@ static int send_EBL_i9250(fwloader_context *ctx) {
 		goto fail;
 	}
 	
-	if ((ret = send_image_i9250(ctx, EBL)) < 0) {
+	if ((ret = send_image_i9250(ctx, EBL, false)) < 0) {
 		_e("failed to send EBL image");
 		goto fail;
 	}
-	
-	if ((ret = expect_data(fd, EBL_IMG_ACK_MAGIC, 2)) < 0) {
+	else {
+		_d("sent EBL image, waiting for ACK");
+	}
+
+	if ((ret = expect_data(fd, I9250_GENERAL_ACK, 4)) < 0) {
 		_e("failed to wait for EBL image ACK");
 		goto fail;
+	}
+	else {
+		_d("got EBL ACK");
 	}
 
 	return 0;
@@ -1221,6 +1244,26 @@ static int boot_modem_i9250(void) {
 	}
 	else {
 		_d("opened second boot device %s, fd=%d", I9250_SECOND_BOOT_DEV, ctx.boot_fd);
+	}
+
+	//RpsiCmdLoadAndExecute
+	if ((ret = write(ctx.boot_fd, I9250_PSI_CMD_EXEC, 4)) < 0) {
+		_e("failed writing cmd_load_exe_EBL", ret);
+		goto fail;
+	}
+	if ((ret = write(ctx.boot_fd, I9250_PSI_EXEC_DATA, 8)) < 0) {
+		_e("failed writing 8 bytes to boot1");
+		goto fail;
+	}
+
+	if ((ret = expect_data(ctx.boot_fd, I9250_GENERAL_ACK, 4)) < 0) {
+		_e("failed to receive cmd_load_exe_EBL ack");
+		goto fail;
+	}
+
+	if ((ret = expect_data(ctx.boot_fd, I9250_PSI_READY_ACK, 4)) < 0) {
+		_e("failed to receive PSI ready ack");
+		goto fail;
 	}
 
 	if ((ret = send_EBL_i9250(&ctx)) < 0) {
