@@ -2,7 +2,14 @@ APPNAME=modem-ctl
 CC=$(CROSS_COMPILE)gcc
 CFLAGS=-std=c99 -static -Wall
 
-CFILES = modem-ctl.c io_helpers.c log.c
+CFILES = \
+	fwloader_i9100.c \
+	fwloader_i9250.c \
+	io_helpers.c \
+	log.c \
+	modem-ctl.c \
+	modemctl_common.c
+
 OBJFILES = $(patsubst %.c,%.o,$(CFILES))
 
 all: $(APPNAME)
