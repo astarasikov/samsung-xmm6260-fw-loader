@@ -31,7 +31,8 @@
 	#define LOG_TAG "xmm6260-sec"
 	#define _p(fmt, x...) \
 		do {\
-			printf("[" LOG_TAG "]: " fmt "\n", ##x); \
+			printf("[" LOG_TAG "]: " fmt " at %s:%s:%d\n", \
+				##x, __FILE__, __func__, __LINE__); \
 		} while (0)
 #else
 	#define _p(fmt, x...) do {} while (0)
