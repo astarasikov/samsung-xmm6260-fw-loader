@@ -373,6 +373,9 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 	memcpy(cmd_data, &header, sizeof(header));
 	memcpy(cmd_data + sizeof(header), data, data_size);
 
+	_d("bootloader cmd packet");
+	hexdump(cmd_data, buf_size);
+
 	if ((ret = write(ctx->boot_fd, cmd_data, buf_size)) < 0) {
 		_e("failed to write command to socket");
 		goto done_or_fail;
@@ -1155,13 +1158,116 @@ typedef struct {
 	uint8_t data[80];
 } __attribute__((packed)) boot_info_i9250_t;
 
+typedef struct {
+	uint16_t check;
+	uint16_t cmd;
+	uint32_t data_size;
+} __attribute__((packed)) bootloader_cmd_i9250_t;
+
+static int bootloader_cmd_i9250(fwloader_context *ctx,
+	enum xmm6260_boot_cmd cmd, void *data, size_t data_size)
+{
+	int ret = 0;
+	if (cmd >= ARRAY_SIZE(xmm6260_boot_cmd_desc)) {
+		_e("bad command %x\n", cmd);
+		goto done_or_fail;
+	}
+
+	unsigned cmd_code = xmm6260_boot_cmd_desc[cmd].code;
+
+	uint16_t magic = (data_size & 0xffff) + cmd_code;
+	unsigned char *ptr = (unsigned char*)data;
+	for (size_t i = 0; i < data_size; i++) {
+		magic += ptr[i];
+	}
+
+	bootloader_cmd_i9250_t header = {
+		.check = magic,
+		.cmd = cmd_code,
+		.data_size = data_size,
+	};
+
+	size_t cmd_size = xmm6260_boot_cmd_desc[cmd].data_size;
+	size_t buf_size = cmd_size + sizeof(header);
+
+	char *cmd_data = (char*)malloc(buf_size);
+	if (!cmd_data) {
+		_e("failed to allocate command buffer");
+		ret = -ENOMEM;
+		goto done_or_fail;
+	}
+	memset(cmd_data, 0, buf_size);
+	memcpy(cmd_data, &header, sizeof(header));
+	memcpy(cmd_data + sizeof(header), data, data_size);
+
+	_d("bootloader cmd packet");
+	hexdump(cmd_data, buf_size);
+
+	if ((ret = write(ctx->boot_fd, cmd_data, buf_size)) < 0) {
+		_e("failed to write command to socket");
+		goto done_or_fail;
+	}
+
+	if (ret != buf_size) {
+		_e("written %d bytes of %d", ret, buf_size);
+		ret = -EINVAL;
+		goto done_or_fail;
+	}
+
+	_d("sent command %x magic=%x", header.cmd, header.check);
+
+	if (!xmm6260_boot_cmd_desc[cmd].need_ack) {
+		ret = 0;
+		goto done_or_fail;
+	}
+
+	bootloader_cmd_t ack = {};
+	if ((ret = receive(ctx->boot_fd, &ack, sizeof(ack))) < 0) {
+		_e("failed to receive ack for cmd %x", header.cmd);
+		goto done_or_fail;
+	}
+
+	if (ret != sizeof(ack)) {
+		_e("received %x bytes of %x for ack", ret, sizeof(ack));
+		ret = -EINVAL;
+		goto done_or_fail;
+	}
+
+	hexdump(&ack, sizeof(ack));
+
+	if (ack.cmd != header.cmd) {
+		_e("ack cmd %x does not match request %x", ack.cmd, header.cmd);
+		ret = -EINVAL;
+		goto done_or_fail;
+	}
+
+	if ((ret = receive(ctx->boot_fd, cmd_data, cmd_size)) < 0) {
+		_e("failed to receive reply data");
+		goto done_or_fail;
+	}
+
+	if (ret != cmd_size) {
+		_e("received %x bytes of %x for reply data", ret, cmd_size);
+		ret = -EINVAL;
+		goto done_or_fail;
+	}
+	hexdump(cmd_data, cmd_size);
+
+done_or_fail:
+
+	if (cmd_data) {
+		free(cmd_data);
+	}
+
+	return ret;
+}
+
 static int ack_BootInfo_i9250(fwloader_context *ctx) {
 	int ret;
 	boot_info_i9250_t info;
 
 	memset(&info, 0, sizeof(info));
 
-#if 1 
 	size_t boot_chunk = 4;
 	for (int i = 0; i < sizeof(info) / boot_chunk; i++) {
 		ret = receive(ctx->boot_fd, info.data + (i * boot_chunk), boot_chunk);
@@ -1170,13 +1276,12 @@ static int ack_BootInfo_i9250(fwloader_context *ctx) {
 			goto fail;
 		}
 	}
-#else
-	while (receive(ctx->boot_fd, &info, sizeof(info)) < 1) {}
-#endif
+	
 	_d("received Boot Info");
 	hexdump(&info, sizeof(info));
 
-	if ((ret = bootloader_cmd(ctx, SetPortConf, &info, sizeof(info))) < 0) {
+	ret = bootloader_cmd_i9250(ctx, SetPortConf, &info, sizeof(info));
+	if (ret < 0) {
 		_e("failed to send SetPortConf command");
 		goto fail;
 	}
