@@ -950,10 +950,11 @@ static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 	else {
 		_d("disabled modem boot power");
 	}
-
+	
 	/*
 	 * Now, initialize the hardware
 	 */
+	
 	if ((ret = modemctl_modem_boot_power(ctx, true)) < 0) {
 		_e("failed to enable modem boot power");
 		goto fail;
@@ -991,11 +992,12 @@ fail:
 #define I9250_PSI_EXEC_DATA "\x00\x00\x00\x00\x02\x00\x02\x00"
 #define I9250_PSI_READY_ACK "\x00\xaa\x00\x00" 
 
-#define I9250_EBL_IMG_ACK_MAGIC "\x02\x00\x00\x00"
+#define I9250_EBL_IMG_ACK_MAGIC "\x51\xa5\x00\x00"
+#define I9250_EBL_HDR_ACK_MAGIC "\xcc\xcc\x00\x00" 
 
-static int send_image_i9250(fwloader_context *ctx,
-	enum xmm6260_image type, bool need_crc)
-{
+#define I9250_NVDATA_LOAD_ADDR 0x61080000
+
+static int send_image_i9250(fwloader_context *ctx, enum xmm6260_image type) {
 	int ret;
 	
 	if (type >= ARRAY_SIZE(i9100_radio_parts)) {
@@ -1008,8 +1010,8 @@ static int send_image_i9250(fwloader_context *ctx,
 
 	size_t start = offset;
 	size_t end = length + start;
-
-	if (type == EBL) { end += 4;}
+	
+	unsigned char crc = calculateCRC(ctx->radio_data, offset, length);
 
 	//dump some image bytes
 	_d("image start");
@@ -1022,36 +1024,41 @@ static int send_image_i9250(fwloader_context *ctx,
 		size_t curr_chunk = chunk_size < remaining ? chunk_size : remaining;
 		ret = write(ctx->boot_fd, ctx->radio_data + start, curr_chunk);
 		if (ret < 0) {
-			_d("failed to write image chunk");
+			_e("failed to write image chunk");
 			goto fail;
 		}
 		start += ret;
 	}
-
 	_d("sent image type=%d", type);
 
-	if (!need_crc) {
-		return 0;
+	if (type == EBL) {
+		if ((ret = write(ctx->boot_fd, &crc, 1)) < 1) {
+			_e("failed to write EBL CRC");
+			goto fail;
+		}
+		else {
+			_d("wrote EBL CRC %02x", crc);
+		}
+		goto done;
 	}
 
-	unsigned char crc = calculateCRC(ctx->radio_data, offset, length);
 	uint32_t crc32 = (crc << 24) | 0xffffff;
 	if ((ret = write(ctx->boot_fd, &crc32, 4)) != 4) {
-		_d("failed to write CRC");
+		_e("failed to write CRC");
 		goto fail;
 	}
 	else {
 		_d("wrote CRC %x", crc);
 	}
 
-	return 0;
+done:
+	ret = 0;
 
 fail:
 	return ret;
 }
 
 static int send_PSI_i9250(fwloader_context *ctx) {
-	size_t length = i9100_radio_parts[PSI].length;
 	int ret = -1;
 
 	if ((ret = write(ctx->boot_fd, I9250_PSI_START_MAGIC, 4)) < 0) {
@@ -1059,7 +1066,7 @@ static int send_PSI_i9250(fwloader_context *ctx) {
 		goto fail;
 	}
 
-	if ((ret = send_image_i9250(ctx, PSI, true)) < 0) {
+	if ((ret = send_image_i9250(ctx, PSI)) < 0) {
 		_e("failed to send PSI image");
 		goto fail;
 	}
@@ -1106,7 +1113,7 @@ static int send_EBL_i9250(fwloader_context *ctx) {
 		goto fail;
 	}
 
-	if ((ret = expect_data(fd, "\xcc\xcc\x00\x00", 4)) < 0) {
+	if ((ret = expect_data(fd, I9250_EBL_HDR_ACK_MAGIC, 4)) < 0) {
 		_e("failed to wait for EBL header ACK");
 		goto fail;
 	}
@@ -1117,7 +1124,7 @@ static int send_EBL_i9250(fwloader_context *ctx) {
 		goto fail;
 	}
 	
-	if ((ret = send_image_i9250(ctx, EBL, false)) < 0) {
+	if ((ret = send_image_i9250(ctx, EBL)) < 0) {
 		_e("failed to send EBL image");
 		goto fail;
 	}
@@ -1126,11 +1133,55 @@ static int send_EBL_i9250(fwloader_context *ctx) {
 	}
 
 	if ((ret = expect_data(fd, I9250_GENERAL_ACK, 4)) < 0) {
+		_e("failed to wait for EBL image general ACK");
+		goto fail;
+	}
+
+	if ((ret = expect_data(fd, I9250_EBL_IMG_ACK_MAGIC, 4)) < 0) {
 		_e("failed to wait for EBL image ACK");
 		goto fail;
 	}
 	else {
 		_d("got EBL ACK");
+	}
+
+	return 0;
+
+fail:
+	return ret;
+}
+
+typedef struct {
+	uint8_t data[80];
+} __attribute__((packed)) boot_info_i9250_t;
+
+static int ack_BootInfo_i9250(fwloader_context *ctx) {
+	int ret;
+	boot_info_i9250_t info;
+
+	memset(&info, 0, sizeof(info));
+
+#if 1 
+	size_t boot_chunk = 4;
+	for (int i = 0; i < sizeof(info) / boot_chunk; i++) {
+		ret = receive(ctx->boot_fd, info.data + (i * boot_chunk), boot_chunk);
+		if (ret < 0) {
+			_e("failed to receive Boot Info chunk %i ret=%d", i, ret);
+			goto fail;
+		}
+	}
+#else
+	while (receive(ctx->boot_fd, &info, sizeof(info)) < 1) {}
+#endif
+	_d("received Boot Info");
+	hexdump(&info, sizeof(info));
+
+	if ((ret = bootloader_cmd(ctx, SetPortConf, &info, sizeof(info))) < 0) {
+		_e("failed to send SetPortConf command");
+		goto fail;
+	}
+	else {
+		_d("sent SetPortConf command");
 	}
 
 	return 0;
@@ -1193,7 +1244,10 @@ static int boot_modem_i9250(void) {
 		else {
 			_d("written ATAT to boot socket, waiting for ACK");
 		}
-		read_select(ctx.boot_fd, 100);
+		
+		if (read_select(ctx.boot_fd, 100) < 0) {
+			_d("failed to select before next ACK, ignoring");
+		}
 	}
 
 	//FIXME: make sure it does not timeout or add the retry in the ril library
@@ -1248,7 +1302,7 @@ static int boot_modem_i9250(void) {
 
 	//RpsiCmdLoadAndExecute
 	if ((ret = write(ctx.boot_fd, I9250_PSI_CMD_EXEC, 4)) < 0) {
-		_e("failed writing cmd_load_exe_EBL", ret);
+		_e("failed writing cmd_load_exe_EBL");
 		goto fail;
 	}
 	if ((ret = write(ctx.boot_fd, I9250_PSI_EXEC_DATA, 8)) < 0) {
@@ -1274,7 +1328,7 @@ static int boot_modem_i9250(void) {
 		_d("EBL download complete");
 	}
 
-	if ((ret = ack_BootInfo(&ctx)) < 0) {
+	if ((ret = ack_BootInfo_i9250(&ctx)) < 0) {
 		_e("failed to receive Boot Info");
 		goto fail;
 	}
