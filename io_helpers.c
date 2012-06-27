@@ -77,7 +77,7 @@ int expect_data(int fd, void *data, size_t size) {
 	int ret;
 	char buf[size];
 	if ((ret = receive(fd, buf, size)) != size) {
-		ret = -EOF;
+		ret = -1;
 		_e("failed to receive data");
 		return ret;
 	}
