@@ -201,7 +201,7 @@ fail:
 #define BL_RESET_MAGIC "\x01\x10\x11\x00" 
 #define BL_RESET_MAGIC_LEN 4
 
-#define POST_BOOT_TIMEOUT_US (500 * 1000)
+#define POST_BOOT_TIMEOUT_US (1000 * 1000)
 
 
 static int send_image_i9250(fwloader_context *ctx, enum xmm6260_image type) {
