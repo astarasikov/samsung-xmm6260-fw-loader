@@ -87,7 +87,7 @@ struct {
 	[ReqFlashWriteBlock] = {
 		.code = 0x804,
 		.data_size = 0x4000,
-		.need_ack = 0,
+		.need_ack = 1,
 	},
 };
 
@@ -192,6 +192,7 @@ fail:
 #define I9250_EBL_IMG_ACK_MAGIC "\x51\xa5\x00\x00"
 #define I9250_EBL_HDR_ACK_MAGIC "\xcc\xcc\x00\x00" 
 
+#define I9250_MPS_IMAGE_PATH "/factory/imei/mps_code.dat"
 #define I9250_MPS_LOAD_ADDR 0x61080000
 #define I9250_MPS_LENGTH 3
 
@@ -590,6 +591,43 @@ fail:
 	return ret;
 }
 
+static int send_mps_data(fwloader_context *ctx) {
+	int ret = 0;
+	int mps_fd = -1;
+	char mps_data[I9250_MPS_LENGTH] = {};
+	uint32_t addr = I9250_MPS_LOAD_ADDR;
+
+	mps_fd = open(I9250_MPS_IMAGE_PATH, O_RDONLY);
+	if (mps_fd < 0) {
+		_e("failed to open MPS data");
+	}
+	else {
+		read(mps_fd, mps_data, I9250_MPS_LENGTH);
+	}
+	
+	if ((ret = bootloader_cmd(ctx, ReqFlashSetAddress, &addr, 4)) < 0) {
+		_e("failed to send ReqFlashSetAddress");
+		goto fail;
+	}
+	else {
+		_d("sent ReqFlashSetAddress");
+	}
+
+	if ((ret = bootloader_cmd(ctx, ReqFlashWriteBlock,
+		mps_data, I9250_MPS_LENGTH)) < 0) {
+		_e("failed to write MPS data to modem");
+		goto fail;
+	}
+
+
+fail:
+	if (mps_fd >= 0) {
+		close(mps_fd);
+	}
+
+	return ret;
+}
+
 static int send_SecureImage_i9250(fwloader_context *ctx) {
 	int ret = 0;
 
@@ -619,6 +657,14 @@ static int send_SecureImage_i9250(fwloader_context *ctx) {
 	}
 	else {
 		_d("sent NVDATA image");
+	}
+
+	if ((ret = send_mps_data(ctx)) < 0) {
+		_e("failed to send MPS data");
+		goto fail;
+	}
+	else {
+		_d("sent MPS data");
 	}
 
 	if ((ret = bootloader_cmd(ctx, ReqSecEnd,
