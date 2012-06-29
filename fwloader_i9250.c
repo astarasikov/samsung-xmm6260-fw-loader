@@ -61,21 +61,26 @@ static struct xmm6260_offset {
 
 struct {
 	unsigned code;
+	bool long_tail;
 } i9250_boot_cmd_desc[] = {
 	[SetPortConf] = {
 		.code = 0x86,
+		.long_tail = 1,
 	},
 	[ReqSecStart] = {
 		.code = 0x204,
+		.long_tail = 1,
 	},
 	[ReqSecEnd] = {
 		.code = 0x205,
 	},
 	[ReqForceHwReset] = {
 		.code = 0x208,
+		.long_tail = 1,
 	},
 	[ReqFlashSetAddress] = {
 		.code = 0x802,
+		.long_tail = 1,
 	},
 	[ReqFlashWriteBlock] = {
 		.code = 0x804,
@@ -130,7 +135,7 @@ static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 	else {
 		_d("disabled modem power");
 	}
-	
+#if 0	
 	if ((ret = modemctl_modem_boot_power(ctx, false)) < 0) {
 		_e("failed to disable modem boot power");
 		goto fail;
@@ -138,11 +143,11 @@ static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 	else {
 		_d("disabled modem boot power");
 	}
-	
+#endif	
 	/*
 	 * Now, initialize the hardware
 	 */
-	
+#if 0	
 	if ((ret = modemctl_modem_boot_power(ctx, true)) < 0) {
 		_e("failed to enable modem boot power");
 		goto fail;
@@ -150,7 +155,7 @@ static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 	else {
 		_d("enabled modem boot power");
 	}
-
+#endif
 	if ((ret = modemctl_modem_power(ctx, true)) < 0) {
 		_e("failed to enable modem power");
 		goto fail;
@@ -406,8 +411,12 @@ static int bootloader_cmd(fwloader_context *ctx,
 	DECLARE_BOOT_CMD_HEADER(header, cmd_code, data_size);
 	DECLARE_BOOT_TAIL_HEADER(tail, checksum);
 
-	size_t cmd_buffer_size = data_size + sizeof(header) + sizeof(tail);
+	size_t tail_size = sizeof(tail);
+	if (!i9250_boot_cmd_desc[cmd].long_tail) {
+		tail_size -= 2;
+	}
 
+	size_t cmd_buffer_size = data_size + sizeof(header) + tail_size;
 	_d("data_size %d [%d] checksum 0x%x", data_size, cmd_buffer_size, checksum);
 
 	char *cmd_data = (char*)malloc(cmd_buffer_size);
@@ -419,7 +428,7 @@ static int bootloader_cmd(fwloader_context *ctx,
 	memset(cmd_data, 0, cmd_buffer_size);
 	memcpy(cmd_data, &header, sizeof(header));
 	memcpy(cmd_data + sizeof(header), data, data_size);
-	memcpy(cmd_data + sizeof(header) + data_size, &tail, sizeof(tail));
+	memcpy(cmd_data + sizeof(header) + data_size, &tail, tail_size);
 
 	_d("bootloader cmd packet");
 	hexdump(cmd_data, cmd_buffer_size);
