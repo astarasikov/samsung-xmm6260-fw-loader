@@ -487,11 +487,7 @@ static int bootloader_cmd(fwloader_context *ctx,
 	_d("ack code 0x%x checksum 0x%x", ack_hdr->cmd, ack_tail->checksum);
 	if (ack_hdr->cmd != header.cmd) {
 		_e("request and ack command codes do not match");
-		goto done_or_fail;
-	}
-
-	if (ack_tail->checksum != tail.checksum) {
-		_e("request and ack checksums do not match");
+		ret = -1;
 		goto done_or_fail;
 	}
 
