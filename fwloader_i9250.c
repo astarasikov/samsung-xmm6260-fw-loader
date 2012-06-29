@@ -62,6 +62,7 @@ static struct xmm6260_offset {
 struct {
 	unsigned code;
 	bool long_tail;
+	bool no_ack;
 } i9250_boot_cmd_desc[] = {
 	[SetPortConf] = {
 		.code = 0x86,
@@ -77,6 +78,7 @@ struct {
 	[ReqForceHwReset] = {
 		.code = 0x208,
 		.long_tail = 1,
+		.no_ack = 1,
 	},
 	[ReqFlashSetAddress] = {
 		.code = 0x802,
@@ -125,6 +127,7 @@ static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 	if (!hard) {
 		return 0;
 	}
+
 	/*
 	 * Disable the hardware to ensure consistent state
 	 */
@@ -135,7 +138,7 @@ static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 	else {
 		_d("disabled modem power");
 	}
-#if 0	
+	
 	if ((ret = modemctl_modem_boot_power(ctx, false)) < 0) {
 		_e("failed to disable modem boot power");
 		goto fail;
@@ -143,11 +146,10 @@ static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 	else {
 		_d("disabled modem boot power");
 	}
-#endif	
+	
 	/*
 	 * Now, initialize the hardware
 	 */
-#if 0	
 	if ((ret = modemctl_modem_boot_power(ctx, true)) < 0) {
 		_e("failed to enable modem boot power");
 		goto fail;
@@ -155,7 +157,7 @@ static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 	else {
 		_d("enabled modem boot power");
 	}
-#endif
+	
 	if ((ret = modemctl_modem_power(ctx, true)) < 0) {
 		_e("failed to enable modem power");
 		goto fail;
@@ -192,7 +194,7 @@ fail:
 #define I9250_MPS_LOAD_ADDR 0x61080000
 #define I9250_MPS_LENGTH 3
 
-#define SEC_DOWNLOAD_CHUNK 0xdf0
+#define SEC_DOWNLOAD_CHUNK 0xdfc2
 #define SEC_DOWNLOAD_DELAY_US (500 * 1000)
 
 /* same for i9100 and i9250? */
@@ -446,6 +448,10 @@ static int bootloader_cmd(fwloader_context *ctx,
 	}
 
 	_d("sent command %x", header.cmd);
+	if (i9250_boot_cmd_desc[cmd].no_ack) {
+		_i("not waiting for ACK");
+		goto done_or_fail;
+	}
 
 	uint32_t ack_length;
 	if ((ret = receive(ctx->boot_fd, &ack_length, 4)) < 0) {
