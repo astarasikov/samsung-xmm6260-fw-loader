@@ -54,40 +54,31 @@ static struct xmm6260_offset {
 	}
 };
 
+/*
+ * on I9250, all commands need ACK and we do not need to
+ * allocate a fixed size buffer
+ */
+
 struct {
 	unsigned code;
-	unsigned data_size;
-	bool need_ack;
 } i9250_boot_cmd_desc[] = {
 	[SetPortConf] = {
 		.code = 0x86,
-		.data_size = 0x800,
-		.need_ack = 1,
 	},
 	[ReqSecStart] = {
 		.code = 0x204,
-		.data_size = 0x4000,
-		.need_ack = 1,
 	},
 	[ReqSecEnd] = {
 		.code = 0x205,
-		.data_size = 0x4000,
-		.need_ack = 1,
 	},
 	[ReqForceHwReset] = {
 		.code = 0x208,
-		.data_size = 0x4000,
-		.need_ack = 0,
 	},
 	[ReqFlashSetAddress] = {
 		.code = 0x802,
-		.data_size = 0x4000,
-		.need_ack = 1,
 	},
 	[ReqFlashWriteBlock] = {
 		.code = 0x804,
-		.data_size = 0x4000,
-		.need_ack = 1,
 	},
 };
 
@@ -447,13 +438,6 @@ static int bootloader_cmd(fwloader_context *ctx,
 
 	_d("sent command %x", header.cmd);
 
-	if (!i9250_boot_cmd_desc[cmd].need_ack) {
-		ret = 0;
-		goto done_or_fail;
-	}
-
-	ret = 0;
-
 	uint32_t ack_length;
 	if ((ret = receive(ctx->boot_fd, &ack_length, 4)) < 0) {
 		_e("failed to receive ack header length");
@@ -491,6 +475,8 @@ static int bootloader_cmd(fwloader_context *ctx,
 		ret = -1;
 		goto done_or_fail;
 	}
+
+	ret = 0;
 
 done_or_fail:
 
