@@ -22,8 +22,69 @@
 #include "modemctl_common.h"
 
 /*
- * I9250 specific implementation
+ * i9250 (Galaxy Nexus) board-specific code
  */
+#define I9250_RADIO_IMAGE "/dev/block/platform/omap/omap_hsmmc.0/by-name/radio"
+#define I9250_SECOND_BOOT_DEV "/dev/umts_boot1"
+
+#define I9250_BOOT_LAST_MARKER 0x0030ffff
+#define I9250_BOOT_REPLY_MAX 20
+
+#define I9250_GENERAL_ACK "\x02\x00\x00\x00"
+
+#define I9250_PSI_START_MAGIC "\xff\xf0\x00\x30"
+#define I9250_PSI_CMD_EXEC "\x08\x00\x00\x00"
+#define I9250_PSI_EXEC_DATA "\x00\x00\x00\x00\x02\x00\x02\x00"
+#define I9250_PSI_READY_ACK "\x00\xaa\x00\x00" 
+
+#define I9250_EBL_IMG_ACK_MAGIC "\x51\xa5\x00\x00"
+#define I9250_EBL_HDR_ACK_MAGIC "\xcc\xcc\x00\x00" 
+
+#define I9250_MPS_IMAGE_PATH "/factory/imei/mps_code.dat"
+#define I9250_MPS_LOAD_ADDR 0x61080000
+#define I9250_MPS_LENGTH 3
+
+#define SEC_DOWNLOAD_CHUNK 0xdfc2
+#define SEC_DOWNLOAD_DELAY_US (500 * 1000)
+
+	#define FW_LOAD_ADDR 0x60300000
+#define NVDATA_LOAD_ADDR 0x60e80000
+
+#define BL_END_MAGIC "\x00\x00"
+#define BL_END_MAGIC_LEN 2
+
+#define BL_RESET_MAGIC "\x01\x10\x11\x00" 
+#define BL_RESET_MAGIC_LEN 4
+
+#define POST_BOOT_TIMEOUT_US (1000 * 1000)
+
+typedef struct {
+	uint32_t total_size;
+	uint16_t hdr_magic;
+	uint16_t cmd;
+	uint16_t data_size;
+} __attribute__((packed)) bootloader_cmd_hdr_t;
+
+#define DECLARE_BOOT_CMD_HEADER(name, code, size) \
+bootloader_cmd_hdr_t name = {\
+	.total_size = size + 10,\
+	.hdr_magic = 2,\
+	.cmd = code,\
+	.data_size = size,\
+}
+
+typedef struct {
+	uint16_t checksum;
+	uint16_t tail_magic;
+	uint8_t unknown[2];
+} __attribute__((packed)) bootloader_cmd_tail_t;
+
+#define DECLARE_BOOT_TAIL_HEADER(name, checksum) \
+bootloader_cmd_tail_t name = {\
+	.checksum = checksum,\
+	.tail_magic = 3,\
+	.unknown = "\xea\xea",\
+}
 
 /*
  * Locations of the firmware components in the Samsung firmware
@@ -89,38 +150,6 @@ struct {
 	},
 };
 
-typedef struct {
-	uint8_t magic;
-	uint16_t length;
-	uint8_t padding;
-} __attribute__((packed)) psi_header_t;
-
-typedef struct {
-	uint8_t data[76];
-} __attribute__((packed)) boot_info_t;
-
-typedef struct {
-	uint16_t check;
-	uint16_t cmd;
-	uint32_t data_size;
-} __attribute__((packed)) bootloader_cmd_t;
-
-/*
- * Bootloader protocol
- */
-static unsigned char calculateCRC(void* data,
-	size_t offset, size_t length)
-{
-	unsigned char crc = 0;
-	unsigned char *ptr = (unsigned char*)(data + offset);
-	
-	while (length--) {
-		crc ^= *ptr++;
-	}
-
-	return crc;
-}
-
 static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 	int ret;
 
@@ -169,47 +198,6 @@ static int reboot_modem_i9250(fwloader_context *ctx, bool hard) {
 fail:
 	return ret;
 }
-
-/*
- * i9250 (Galaxy Nexus) board-specific code
- */
-
-#define I9250_RADIO_IMAGE "/dev/block/platform/omap/omap_hsmmc.0/by-name/radio"
-#define I9250_SECOND_BOOT_DEV "/dev/umts_boot1"
-
-#define I9250_BOOT_LAST_MARKER 0x0030ffff
-#define I9250_BOOT_REPLY_MAX 20
-
-#define I9250_GENERAL_ACK "\x02\x00\x00\x00"
-
-#define I9250_PSI_START_MAGIC "\xff\xf0\x00\x30"
-#define I9250_PSI_CMD_EXEC "\x08\x00\x00\x00"
-#define I9250_PSI_EXEC_DATA "\x00\x00\x00\x00\x02\x00\x02\x00"
-#define I9250_PSI_READY_ACK "\x00\xaa\x00\x00" 
-
-#define I9250_EBL_IMG_ACK_MAGIC "\x51\xa5\x00\x00"
-#define I9250_EBL_HDR_ACK_MAGIC "\xcc\xcc\x00\x00" 
-
-#define I9250_MPS_IMAGE_PATH "/factory/imei/mps_code.dat"
-#define I9250_MPS_LOAD_ADDR 0x61080000
-#define I9250_MPS_LENGTH 3
-
-#define SEC_DOWNLOAD_CHUNK 0xdfc2
-#define SEC_DOWNLOAD_DELAY_US (500 * 1000)
-
-/* same for i9100 and i9250? */
-
-#define FW_LOAD_ADDR 0x60300000
-#define NVDATA_LOAD_ADDR 0x60e80000
-
-#define BL_END_MAGIC "\x00\x00"
-#define BL_END_MAGIC_LEN 2
-
-#define BL_RESET_MAGIC "\x01\x10\x11\x00" 
-#define BL_RESET_MAGIC_LEN 4
-
-#define POST_BOOT_TIMEOUT_US (1000 * 1000)
-
 
 static int send_image_i9250(fwloader_context *ctx, enum xmm6260_image type) {
 	int ret;
@@ -363,34 +351,6 @@ static int send_EBL_i9250(fwloader_context *ctx) {
 
 fail:
 	return ret;
-}
-
-typedef struct {
-	uint32_t total_size;
-	uint16_t hdr_magic;
-	uint16_t cmd;
-	uint16_t data_size;
-} __attribute__((packed)) bootloader_cmd_hdr_t;
-
-#define DECLARE_BOOT_CMD_HEADER(name, code, size) \
-bootloader_cmd_hdr_t name = {\
-	.total_size = size + 10,\
-	.hdr_magic = 2,\
-	.cmd = code,\
-	.data_size = size,\
-}
-
-typedef struct {
-	uint16_t checksum;
-	uint16_t tail_magic;
-	uint8_t unknown[2];
-} __attribute__((packed)) bootloader_cmd_tail_t;
-
-#define DECLARE_BOOT_TAIL_HEADER(name, checksum) \
-bootloader_cmd_tail_t name = {\
-	.checksum = checksum,\
-	.tail_magic = 3,\
-	.unknown = "\xea\xea",\
 }
 
 static int bootloader_cmd(fwloader_context *ctx,
@@ -848,15 +808,12 @@ int boot_modem_i9250(void) {
 
 	usleep(POST_BOOT_TIMEOUT_US);
 
-	if ((ret = reboot_modem_i9250(&ctx, false))) {
-		_e("failed to soft reset modem");
+	if ((ret = modemctl_wait_modem_online(&ctx))) {
+		_e("failed to wait for modem to become online");
 		goto fail;
 	}
-	else {
-		_d("modem soft reset done");
-	}
 
-	_i("online");
+	_i("modem online");
 
 fail:
 	if (ctx.radio_data != MAP_FAILED) {

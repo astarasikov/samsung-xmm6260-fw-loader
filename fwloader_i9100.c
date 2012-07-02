@@ -133,22 +133,6 @@ typedef struct {
 	uint32_t data_size;
 } __attribute__((packed)) bootloader_cmd_t;
 
-/*
- * Bootloader protocol
- */
-static unsigned char calculateCRC(void* data,
-	size_t offset, size_t length)
-{
-	unsigned char crc = 0;
-	unsigned char *ptr = (unsigned char*)(data + offset);
-	
-	while (length--) {
-		crc ^= *ptr++;
-	}
-
-	return crc;
-}
-
 static int send_image(fwloader_context *ctx, enum xmm6260_image type) {
 	int ret;
 	

@@ -95,6 +95,40 @@ fail:
 	return ret;
 }
 
+int modemctl_wait_modem_online(fwloader_context *ctx) {
+	int ret;
+
+	struct timeval tv_start = {};
+	struct timeval tv_end = {};
+
+	gettimeofday(&tv_start, 0);;
+
+	//link wakeup timeout in milliseconds
+	long diff = 0;
+
+	do {
+		ret = c_ioctl(ctx->boot_fd, IOCTL_MODEM_STATUS, 0);
+		if (ret < 0) {
+			goto fail;
+		}
+
+		if (ret == STATE_ONLINE) {
+			return 0;
+		}
+
+		usleep(LINK_POLL_DELAY_US);
+		gettimeofday(&tv_end, 0);;
+
+		diff = (tv_end.tv_sec - tv_start.tv_sec) * 1000;
+		diff += (tv_end.tv_usec - tv_start.tv_usec) / 1000;
+	} while (diff < LINK_TIMEOUT_MS);
+
+	ret = -ETIMEDOUT;
+	
+fail:
+	return ret;
+}
+
 int modemctl_modem_power(fwloader_context *ctx, bool enabled) {
 	if (enabled) {
 		return c_ioctl(ctx->boot_fd, IOCTL_MODEM_ON, 0);
@@ -114,3 +148,16 @@ int modemctl_modem_boot_power(fwloader_context *ctx, bool enabled) {
 	}
 	return -1;
 }
+
+unsigned char calculateCRC(void* data, size_t offset, size_t length)
+{
+	unsigned char crc = 0;
+	unsigned char *ptr = (unsigned char*)(data + offset);
+	
+	while (length--) {
+		crc ^= *ptr++;
+	}
+
+	return crc;
+}
+

@@ -110,6 +110,15 @@ int modemctl_link_set_enabled(fwloader_context *ctx, bool enabled);
 int modemctl_wait_link_ready(fwloader_context *ctx);
 
 /* 
+ * @brief Poll the modem until it gets online or times out
+ *
+ * @param ctx [in] firmware loader context
+ * @return Negative value indicating error code
+ * @return ioctl call result
+ */
+int modemctl_wait_modem_online(fwloader_context *ctx);
+
+/* 
  * @brief Sets the modem power
  *
  * @param ctx [in] firmware loader context
@@ -144,5 +153,15 @@ int boot_modem_i9100(void);
  * @return zero on success
  */
 int boot_modem_i9250(void);
+
+/* 
+ * @brief Calculate the checksum for the XMM6260 bootloader protocol
+ *
+ * @param data [in] the data to calculate the checksum for
+ * @param offset [in] number of bytes to skip
+ * @param length [in] length of data in bytes
+ * @return checksum value
+ */
+unsigned char calculateCRC(void* data, size_t offset, size_t length);
 
 #endif //__MODEMCTL_COMMON_H__
