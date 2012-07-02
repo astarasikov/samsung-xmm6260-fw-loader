@@ -67,8 +67,7 @@ int read_select(int fd, unsigned timeout) {
 	}
 
 	if (ret < 1 || !FD_ISSET(fd, &read_set)) {
-		_e("fd %d not in fd set", fd);
-		ret = -ETIMEDOUT;
+		_d("fd %d not in fd set", fd);
 		goto fail;
 	}
 

@@ -1,6 +1,6 @@
 APPNAME=modem-ctl
 CC=$(CROSS_COMPILE)gcc
-CFLAGS=-std=c99 -DDEBUG -static -Wall
+CFLAGS=-std=c99 -static -Wall
 
 CFILES = \
 	fwloader_i9100.c \
