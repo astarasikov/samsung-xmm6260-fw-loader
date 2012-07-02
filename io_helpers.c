@@ -48,6 +48,8 @@ int c_ioctl(int fd, unsigned long code, void* data) {
 }
 
 int read_select(int fd, unsigned timeout) {
+	int ret = 0;
+	
 	struct timeval tv = {
 		tv.tv_sec = timeout / 1000,
 		tv.tv_usec = 1000 * (timeout % 1000),
@@ -57,17 +59,31 @@ int read_select(int fd, unsigned timeout) {
 	FD_ZERO(&read_set);
 	FD_SET(fd, &read_set);
 
-	return select(fd + 1, &read_set, 0, 0, &tv);
+	ret = select(fd + 1, &read_set, 0, 0, &tv);
+
+	if (ret < 0) {
+		_e("failed to select the fd %d ret=%d: %s", fd, ret, strerror(errno));
+		goto fail;
+	}
+
+	if (ret < 1 || !FD_ISSET(fd, &read_set)) {
+		_e("fd %d not in fd set", fd);
+		ret = -ETIMEDOUT;
+		goto fail;
+	}
+
+fail:
+	return ret;
 }
 
 int receive(int fd, void *buf, size_t size) {
 	int ret;
 	if ((ret = read_select(fd, DEFAULT_TIMEOUT)) < 1) {
-		_e("%s: failed to select the fd %d", __func__, fd);
+		_e("failed to select the fd %d", fd);
 		return ret;
 	}
 	else {
-		_d("%s: selected %d fds for fd=%d", __func__, ret, fd);
+		_d("selected %d fds for fd=%d", ret, fd);
 	}
 
 	return read(fd, buf, size);
