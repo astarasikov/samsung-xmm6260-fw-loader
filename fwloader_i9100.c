@@ -644,7 +644,7 @@ int boot_modem_i9100(void) {
 		goto fail;
 	}
 
-	ctx.boot_fd = open(BOOT_DEV, O_RDWR);
+	ctx.boot_fd = open(BOOT_DEV, O_RDWR | O_NOCTTY | O_NONBLOCK);
 	if (ctx.boot_fd < 0) {
 		_e("failed to open boot device");
 		goto fail;

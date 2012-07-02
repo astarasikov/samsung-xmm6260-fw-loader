@@ -678,7 +678,7 @@ int boot_modem_i9250(void) {
 		goto fail;
 	}
 
-	ctx.boot_fd = open(BOOT_DEV, O_RDWR);
+	ctx.boot_fd = open(BOOT_DEV, O_RDWR | O_NOCTTY | O_NONBLOCK);
 	if (ctx.boot_fd < 0) {
 		_e("failed to open boot device");
 		goto fail;
@@ -753,7 +753,7 @@ int boot_modem_i9250(void) {
 	}
 	
 	close(ctx.boot_fd);
-	ctx.boot_fd = open(I9250_SECOND_BOOT_DEV, O_RDWR);
+	ctx.boot_fd = open(I9250_SECOND_BOOT_DEV, O_RDWR | O_NOCTTY | O_NONBLOCK);
 	if (ctx.boot_fd < 0) {
 		_e("failed to open " I9250_SECOND_BOOT_DEV " control device");
 		goto fail;
