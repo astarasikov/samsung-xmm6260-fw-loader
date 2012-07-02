@@ -277,8 +277,9 @@ static int send_PSI_i9250(fwloader_context *ctx) {
 		"\x02\x00\x00\x00",
 		"\x01\xdd\x00\x00",
 	};
-
-	for (int i = 0; i < ARRAY_SIZE(expected_acks); i++) {
+	
+	int i;
+	for (i = 0; i < ARRAY_SIZE(expected_acks); i++) {
 		ret = expect_data(ctx->boot_fd, expected_acks[i], 4);
 		if (ret < 0) {
 			_d("failed to wait for ack %d", i);
@@ -364,7 +365,8 @@ static int bootloader_cmd(fwloader_context *ctx,
 
 	uint16_t checksum = (data_size & 0xffff) + cmd_code;
 	unsigned char *ptr = (unsigned char*)data;
-	for (size_t i = 0; i < data_size; i++) {
+	size_t i;
+	for (i = 0; i < data_size; i++) {
 		checksum += ptr[i];
 	}
 
@@ -417,7 +419,7 @@ static int bootloader_cmd(fwloader_context *ctx,
 		goto done_or_fail;
 	}
 
-	if (ack_length + 4> cmd_buffer_size) {
+	if (ack_length + 4 > cmd_buffer_size) {
 		free(cmd_data);
 		cmd_data = NULL;
 		cmd_data = malloc(ack_length + 4);
@@ -428,7 +430,7 @@ static int bootloader_cmd(fwloader_context *ctx,
 	}
 	memset(cmd_data, 0, ack_length);
 	memcpy(cmd_data, &ack_length, 4);
-	for (int i = 0; i < (ack_length + 3) / 4; i++) {
+	for (i = 0; i < (ack_length + 3) / 4; i++) {
 		if ((ret = receive(ctx->boot_fd, cmd_data + ((i + 1) << 2), 4)) < 0) {
 			_e("failed to receive ack chunk");
 			goto done_or_fail;
@@ -483,7 +485,8 @@ static int ack_BootInfo_i9250(fwloader_context *ctx) {
 
 	size_t boot_chunk = 4;
 	size_t boot_chunk_count = (boot_info_length + boot_chunk - 1) / boot_chunk;
-	for (int i = 0; i < boot_chunk_count; i++) {
+	int i;
+	for (i = 0; i < boot_chunk_count; i++) {
 		ret = receive(ctx->boot_fd, boot_info + (i * boot_chunk), boot_chunk);
 		if (ret < 0) {
 			_e("failed to receive Boot Info chunk %i ret=%d", i, ret);
@@ -696,7 +699,8 @@ int boot_modem_i9250(void) {
 	/*
 	 * Now, actually load the firmware
 	 */
-	for (int i = 0; i < 2; i++) {
+	int i;
+	for (i = 0; i < 2; i++) {
 		if (write(ctx.boot_fd, "ATAT", 4) != 4) {
 			_e("failed to write ATAT to boot socket");
 			goto fail;
@@ -721,7 +725,7 @@ int boot_modem_i9250(void) {
 	}
 
 	ret = -ETIMEDOUT;
-	for (int i = 0; i < I9250_BOOT_REPLY_MAX; i++) {
+	for (i = 0; i < I9250_BOOT_REPLY_MAX; i++) {
 		uint32_t id_buf;
 		if ((ret = receive(ctx.boot_fd, (void*)&id_buf, 4)) != 4) {
 			_e("failed receiving bootloader reply");

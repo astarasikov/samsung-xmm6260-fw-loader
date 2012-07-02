@@ -33,7 +33,8 @@ void hexdump(void* data, size_t size) {
 
 	size_t len = size < DUMP_SIZE ? size : DUMP_SIZE;
 	memset(__hd_buf, 0, sizeof(__hd_buf));
-	for (int i = 0; i < len; i++) {
+	int i;
+	for (i = 0; i < len; i++) {
 		snprintf(__hd_buf + i * 3, 4, "%02x ", _data[i]);	
 	}
 

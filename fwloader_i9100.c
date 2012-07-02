@@ -196,7 +196,8 @@ static int send_PSI(fwloader_context *ctx) {
 		goto fail;
 	}
 
-	for (int i = 0; i < 22; i++) {
+	int i;
+	for (i = 0; i < 22; i++) {
 		char ack;
 		if (receive(ctx->boot_fd, &ack, 1) < 1) {
 			_d("failed to read ACK byte %d", i);
@@ -273,7 +274,8 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 
 	uint16_t magic = (data_size & 0xffff) + cmd_code;
 	unsigned char *ptr = (unsigned char*)data;
-	for (size_t i = 0; i < data_size; i++) {
+	size_t i;
+	for (i = 0; i < data_size; i++) {
 		magic += ptr[i];
 	}
 
