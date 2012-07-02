@@ -56,8 +56,6 @@
 #define BL_RESET_MAGIC "\x01\x10\x11\x00" 
 #define BL_RESET_MAGIC_LEN 4
 
-#define POST_BOOT_TIMEOUT_US (1000 * 1000)
-
 typedef struct {
 	uint32_t total_size;
 	uint16_t hdr_magic;
@@ -805,8 +803,6 @@ int boot_modem_i9250(void) {
 	else {
 		_d("Secure Image download complete");
 	}
-
-	usleep(POST_BOOT_TIMEOUT_US);
 
 	if ((ret = modemctl_wait_modem_online(&ctx))) {
 		_e("failed to wait for modem to become online");
