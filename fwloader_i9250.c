@@ -198,7 +198,7 @@ fail:
 }
 
 static int send_image_i9250(fwloader_context *ctx, enum xmm6260_image type) {
-	int ret;
+	int ret = -1;
 	
 	if (type >= ARRAY_SIZE(i9250_radio_parts)) {
 		_e("bad image type %x", type);
@@ -278,7 +278,7 @@ static int send_PSI_i9250(fwloader_context *ctx) {
 		"\x01\xdd\x00\x00",
 	};
 	
-	int i;
+	unsigned i;
 	for (i = 0; i < ARRAY_SIZE(expected_acks); i++) {
 		ret = expect_data(ctx->boot_fd, expected_acks[i], 4);
 		if (ret < 0) {
@@ -356,6 +356,7 @@ static int bootloader_cmd(fwloader_context *ctx,
 	enum xmm6260_boot_cmd cmd, void *data, size_t data_size)
 {
 	int ret = 0;
+	char *cmd_data = 0;
 	if (cmd >= ARRAY_SIZE(i9250_boot_cmd_desc)) {
 		_e("bad command %x\n", cmd);
 		goto done_or_fail;
@@ -381,7 +382,7 @@ static int bootloader_cmd(fwloader_context *ctx,
 	size_t cmd_buffer_size = data_size + sizeof(header) + tail_size;
 	_d("data_size %d [%d] checksum 0x%x", data_size, cmd_buffer_size, checksum);
 
-	char *cmd_data = (char*)malloc(cmd_buffer_size);
+	cmd_data = (char*)malloc(cmd_buffer_size);
 	if (!cmd_data) {
 		_e("failed to allocate command buffer");
 		ret = -ENOMEM;
@@ -401,7 +402,7 @@ static int bootloader_cmd(fwloader_context *ctx,
 		goto done_or_fail;
 	}
 
-	if (ret < cmd_buffer_size) {
+	if ((unsigned)ret < cmd_buffer_size) {
 		_e("written %d bytes of %d", ret, cmd_buffer_size);
 		ret = -EINVAL;
 		goto done_or_fail;
@@ -485,7 +486,7 @@ static int ack_BootInfo_i9250(fwloader_context *ctx) {
 
 	size_t boot_chunk = 4;
 	size_t boot_chunk_count = (boot_info_length + boot_chunk - 1) / boot_chunk;
-	int i;
+	unsigned i;
 	for (i = 0; i < boot_chunk_count; i++) {
 		ret = receive(ctx->boot_fd, boot_info + (i * boot_chunk), boot_chunk);
 		if (ret < 0) {
@@ -654,7 +655,7 @@ fail:
 }
 
 int boot_modem_i9250(void) {
-	int ret;
+	int ret = -1;
 	fwloader_context ctx;
 	memset(&ctx, 0, sizeof(ctx));
 
@@ -814,6 +815,7 @@ int boot_modem_i9250(void) {
 	}
 
 	_i("modem online");
+	ret = 0;
 
 fail:
 	if (ctx.radio_data != MAP_FAILED) {

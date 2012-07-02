@@ -134,7 +134,7 @@ typedef struct {
 } __attribute__((packed)) bootloader_cmd_t;
 
 static int send_image(fwloader_context *ctx, enum xmm6260_image type) {
-	int ret;
+	int ret = -1;
 	
 	if (type >= ARRAY_SIZE(i9100_radio_parts)) {
 		_e("bad image type %x", type);
@@ -265,6 +265,7 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 	void *data, size_t data_size)
 {
 	int ret = 0;
+	char *cmd_data = 0;
 	if (cmd >= ARRAY_SIZE(i9100_boot_cmd_desc)) {
 		_e("bad command %x\n", cmd);
 		goto done_or_fail;
@@ -288,7 +289,7 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 	size_t cmd_size = i9100_boot_cmd_desc[cmd].data_size;
 	size_t buf_size = cmd_size + sizeof(header);
 
-	char *cmd_data = (char*)malloc(buf_size);
+	cmd_data = (char*)malloc(buf_size);
 	if (!cmd_data) {
 		_e("failed to allocate command buffer");
 		ret = -ENOMEM;
@@ -306,7 +307,7 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 		goto done_or_fail;
 	}
 
-	if (ret != buf_size) {
+	if ((unsigned)ret != buf_size) {
 		_e("written %d bytes of %d", ret, buf_size);
 		ret = -EINVAL;
 		goto done_or_fail;
@@ -319,7 +320,9 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 		goto done_or_fail;
 	}
 
-	bootloader_cmd_t ack = {};
+	bootloader_cmd_t ack = {
+		.check = 0,
+	};
 	if ((ret = receive(ctx->boot_fd, &ack, sizeof(ack))) < 0) {
 		_e("failed to receive ack for cmd %x", header.cmd);
 		goto done_or_fail;
@@ -344,7 +347,7 @@ static int bootloader_cmd(fwloader_context *ctx, enum xmm6260_boot_cmd cmd,
 		goto done_or_fail;
 	}
 
-	if (ret != cmd_size) {
+	if ((unsigned)ret != cmd_size) {
 		_e("received %x bytes of %x for reply data", ret, cmd_size);
 		ret = -EINVAL;
 		goto done_or_fail;
@@ -488,13 +491,14 @@ fail:
  * Power management
  */
 static int i9100_ehci_setpower(bool enabled) {
-	int ret;
+	int ret = -1;
 	
 	_d("%s: enabled=%d", __func__, enabled);
 	
 	int ehci_fd = open(I9100_EHCI_PATH, O_RDWR);
 	if (ehci_fd < 0) {
 		_e("failed to open EHCI fd");
+		ret = -ENODEV;
 		goto fail;
 	}
 	else {
@@ -621,7 +625,7 @@ fail:
 }
 
 int boot_modem_i9100(void) {
-	int ret;
+	int ret = 0;
 	fwloader_context ctx;
 	memset(&ctx, 0, sizeof(ctx));
 
@@ -737,6 +741,7 @@ int boot_modem_i9100(void) {
 	}
 
 	_i("online");
+	ret = 0;
 
 fail:
 	if (ctx.radio_data != MAP_FAILED) {
